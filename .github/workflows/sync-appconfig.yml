@@ -32,7 +32,6 @@ jobs:
             VM_LABEL='${{ vars.VM_LABEL }}'
 
             API_BASEURL='${{ vars.API_BASEURL }}'
-            AUTH_CLIENT_ID='${{ secrets.AUTH_CLIENT_ID }}'
             FEATURE_X_ENABLED='${{ vars.FEATURE_X_ENABLED }}'
 
             DB_CONN_SECRET_URI='${{ secrets.DB_CONN_SECRET_URI }}'
@@ -59,13 +58,6 @@ jobs:
 
             az appconfig kv set \
               --connection-string "$APPCONFIG_CONNECTION_STRING" \
-              --key "App:Auth:ClientId" \
-              --label "$VM_LABEL" \
-              --value "$AUTH_CLIENT_ID" \
-              --yes
-
-            az appconfig kv set \
-              --connection-string "$APPCONFIG_CONNECTION_STRING" \
               --key "Features:FeatureX:Enabled" \
               --label "$VM_LABEL" \
               --value "$FEATURE_X_ENABLED" \
@@ -79,15 +71,6 @@ jobs:
                 --key "ConnStrings:Db" \
                 --label "$VM_LABEL" \
                 --secret-identifier "$DB_CONN_SECRET_URI" \
-                --yes
-            fi
-
-            if [ -n "$SENDGRID_KEY_URI" ]; then
-              az appconfig kv set-keyvault \
-                --connection-string "$APPCONFIG_CONNECTION_STRING" \
-                --key "Integrations:SendGrid:ApiKey" \
-                --label "$VM_LABEL" \
-                --secret-identifier "$SENDGRID_KEY_URI" \
                 --yes
             fi
 
