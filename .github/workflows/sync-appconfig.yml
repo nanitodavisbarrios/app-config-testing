@@ -34,9 +34,6 @@ jobs:
             API_BASEURL='${{ vars.API_BASEURL }}'
             FEATURE_X_ENABLED='${{ vars.FEATURE_X_ENABLED }}'
 
-            DB_CONN_SECRET_URI='${{ secrets.DB_CONN_SECRET_URI }}'
-            SENDGRID_KEY_URI='${{ secrets.SENDGRID_KEY_URI }}'
-
             # Safety check
             if [ -z "$APPCONFIG_CONNECTION_STRING" ]; then
               echo "ERROR: APPCONFIG_CONNECTION_STRING not set for this environment."
@@ -63,16 +60,6 @@ jobs:
               --value "$FEATURE_X_ENABLED" \
               --content-type "text/plain" \
               --yes
-
-            # --- Upsert Key Vault references (examples) ---
-            if [ -n "$DB_CONN_SECRET_URI" ]; then
-              az appconfig kv set-keyvault \
-                --connection-string "$APPCONFIG_CONNECTION_STRING" \
-                --key "ConnStrings:Db" \
-                --label "$VM_LABEL" \
-                --secret-identifier "$DB_CONN_SECRET_URI" \
-                --yes
-            fi
 
             # Optional summary
             az appconfig kv list \
