@@ -56,7 +56,6 @@ jobs:
             az appconfig kv set \
               --connection-string "$APPCONFIG_CONNECTION_STRING" \
               --key "Features:FeatureX:Enabled" \
-              --label "$VM_LABEL" \
               --value "$FEATURE_X_ENABLED" \
               --content-type "text/plain" \
               --yes
