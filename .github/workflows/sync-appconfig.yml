@@ -1,10 +1,10 @@
-name: Sync Azure App Configuration (no OIDC)
+name: Sync Azure App Configuration (no OIDC) - BU repo
 
 on:
   workflow_dispatch:
     inputs:
       targetEnv:
-        description: "Choose environment (dev/test/prod)"
+        description: "Environment (dev/test/prod)"
         required: true
         default: "dev"
 
@@ -14,56 +14,91 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    # Bind this run to the chosen GitHub Environment so it can read that env's secrets/vars
     environment: ${{ inputs.targetEnv }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Update App Configuration via connection string
+      - name: Build JSON and push keys (Feature:AutoUpdate, Feature:DataExplorer)
         uses: azure/cli@v2
         with:
           inlineScript: |
             set -euo pipefail
 
-            # ---- Pull env-specific values from GitHub Environment ----
-            APPCONFIG_CONNECTION_STRING='${{ secrets.APPCONFIG_CONNECTION_STRING }}'
-            VM_LABEL='${{ vars.VM_LABEL }}'
+            # ---- Inputs from GitHub Environment ----
+            CS='${{ secrets.APPCONFIG_CONNECTION_STRING }}'
+            LABEL_RAW='${{ vars.TARGET_LABEL }}'
 
-            API_BASEURL='${{ vars.API_BASEURL }}'
-            FEATURE_X_ENABLED='${{ vars.FEATURE_X_ENABLED }}'
+            # Normalize label arg: allow sentinel for No label
+            if [ "$LABEL_RAW" = "_NO_LABEL_" ] || [ -z "${LABEL_RAW:-}" ]; then
+              LABEL=""
+            else
+              LABEL="$LABEL_RAW"
+            fi
 
-            # Safety check
-            if [ -z "$APPCONFIG_CONNECTION_STRING" ]; then
-              echo "ERROR: APPCONFIG_CONNECTION_STRING not set for this environment."
+            # ---------- Feature:AutoUpdate ----------
+            AUTO_SCRIPT='VEStudio.schedule'
+            AUTO_REPORT='laststatuses.txt'
+            AUTO_SAVE='false'   # "true"/"false" string (keep as-is)
+            AUTO_EMAIL='false'        # "true"/"false" string (keep as-is)
+
+            # ---------- Feature:DataExplorer ----------
+            DEX_READ_ROLE='DDT_DataExplorer'
+            DEX_MODIFY_ROLE='DDT_DataExplorer_Modify'
+            STORAGE_ACCOUNT='${{ vars.STORAGE_ACCOUNT }}'
+            SHARE_USERCONTENT='usercontent'
+
+            if [ -z "$CS" ]; then
+              echo "ERROR: APPCONFIG_CONNECTION_STRING is not set for this environment."
               exit 1
             fi
 
-            echo "Writing to App Configuration with label: $VM_LABEL"
-
-            # Ensure App Configuration extension exists (safe if already present)
+            # Tools
             az extension add --name appconfig --only-show-errors || true
+            sudo apt-get update -y >/dev/null 2>&1 || true
+            sudo apt-get install -y jq >/dev/null 2>&1
 
-            # --- Upsert plain key-values (examples) ---
-            az appconfig kv set \
-              --connection-string "$APPCONFIG_CONNECTION_STRING" \
-              --key "App:Api:BaseUrl" \
-              --label "$VM_LABEL" \
-              --value "$API_BASEURL" \
+            # Prepare label flag
+            labelFlag=()
+            if [ -n "$LABEL" ]; then
+              labelFlag+=(--label "$LABEL")
+              echo "Using label: $LABEL"
+            else
+              echo "Using NO label"
+            fi
+
+            # ---------- Build JSON values with jq (no escaping headaches) ----------
+            # Feature:AutoUpdate
+            AUTO_JSON=$(jq -c -n \
+              --arg script "$AUTO_SCRIPT" \
+              --arg report "$AUTO_REPORT" \
+              --arg save "$AUTO_SAVE" \
+              --arg email "$AUTO_EMAIL" \
+              '{ ScriptFileName:$script,
+                 ReportFileName:$report,
+                 SaveFullReport:$save,
+                 SendReportByEmail:$email }')
+
+            # Build UNC base with double backslashes for JSON
+            # Result (example): \\storageaccount.file.core.windows.net\usercontent
+            UNC_BASE="\\\\\\${STORAGE_ACCOUNT}.file.core.windows.net\\${SHARE_USERCONTENT}"
+
+            # Feature:DataExplorer
+            DEX_JSON=$(jq -c -n \
+              --arg readRole   "$DEX_READ_ROLE" \
+              --arg modifyRole "$DEX_MODIFY_ROLE" \
+              --arg queries    "${UNC_BASE}\\Queries" \
+              --arg highlights "${UNC_BASE}\\Highlights" \
+              '{ ReadRole:$readRole,
+                 RequiredRoleToModify:$modifyRole,
+                 QueriesFolder:$queries,
+                 HighlightsFolder:$highlights }')
+
+            # ---------- Upsert JSON keys ----------
+            az appconfig kv set --connection-string "$CS" \
+              --key "Feature:AutoUpdate" \
+              "${labelFlag[@]}" \
+              --value "$AUTO_JSON" \
+              --content-type "application/json" \
               --yes
-
-            az appconfig kv set \
-              --connection-string "$APPCONFIG_CONNECTION_STRING" \
-              --key "Features:FeatureX:Enabled" \
-              --value "$FEATURE_X_ENABLED" \
-              --content-type "text/plain" \
-              --yes
-
-            # Optional summary
-            az appconfig kv list \
-              --connection-string "$APPCONFIG_CONNECTION_STRING" \
-              --label "$VM_LABEL" \
-              --top 20 \
-              --query "[].{key:key, label:label, contentType:content_type, lastModified:last_modified}" \
-              -o table
