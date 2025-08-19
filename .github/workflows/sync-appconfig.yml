@@ -1,36 +1,19 @@
-name: Sync Azure App Configuration (no OIDC) - BU repo
-
-on:
-  workflow_dispatch:
-    inputs:
-      targetEnv:
-        description: "Environment (dev/test/prod)"
-        required: true
-        default: "dev"
-
-permissions:
-  contents: read
-
-jobs:
-  sync:
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.targetEnv }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Build JSON and push keys (Feature:AutoUpdate, Feature:DataExplorer)
         uses: azure/cli@v2
         with:
+          # Pin to a stable CLI if you want; otherwise omit to use the action's default.
+          # azcliversion: 2.62.0
           inlineScript: |
             set -euo pipefail
+
+            # Make the CLI auto-install any missing extension (no prompts)
+            az config set extension.use_dynamic_install=yes_without_prompt
+            az --version
 
             # ---- Inputs from GitHub Environment ----
             CS='${{ secrets.APPCONFIG_CONNECTION_STRING }}'
             LABEL_RAW='${{ vars.TARGET_LABEL }}'
 
-            # Normalize label arg: allow sentinel for No label
             if [ "$LABEL_RAW" = "_NO_LABEL_" ] || [ -z "${LABEL_RAW:-}" ]; then
               LABEL=""
             else
@@ -40,8 +23,8 @@ jobs:
             # ---------- Feature:AutoUpdate ----------
             AUTO_SCRIPT='VEStudio.schedule'
             AUTO_REPORT='laststatuses.txt'
-            AUTO_SAVE='false'   # "true"/"false" string (keep as-is)
-            AUTO_EMAIL='false'        # "true"/"false" string (keep as-is)
+            AUTO_SAVE='false'      # keep as string unless your app expects JSON booleans
+            AUTO_EMAIL='false'
 
             # ---------- Feature:DataExplorer ----------
             DEX_READ_ROLE='DDT_DataExplorer'
@@ -54,8 +37,7 @@ jobs:
               exit 1
             fi
 
-            # Tools
-            az extension add --name appconfig --only-show-errors || true
+            # We only need jq; no need to apt-get the appconfig extension anymore
             sudo apt-get update -y >/dev/null 2>&1 || true
             sudo apt-get install -y jq >/dev/null 2>&1
 
@@ -68,8 +50,7 @@ jobs:
               echo "Using NO label"
             fi
 
-            # ---------- Build JSON values with jq (no escaping headaches) ----------
-            # Feature:AutoUpdate
+            # ---------- Build JSON values with jq ----------
             AUTO_JSON=$(jq -c -n \
               --arg script "$AUTO_SCRIPT" \
               --arg report "$AUTO_REPORT" \
@@ -80,11 +61,9 @@ jobs:
                  SaveFullReport:$save,
                  SendReportByEmail:$email }')
 
-            # Build UNC base with double backslashes for JSON
-            # Result (example): \\storageaccount.file.core.windows.net\usercontent
+            # UNC base: \\<acct>.file.core.windows.net\<share>
             UNC_BASE="\\\\\\${STORAGE_ACCOUNT}.file.core.windows.net\\${SHARE_USERCONTENT}"
 
-            # Feature:DataExplorer
             DEX_JSON=$(jq -c -n \
               --arg readRole   "$DEX_READ_ROLE" \
               --arg modifyRole "$DEX_MODIFY_ROLE" \
@@ -100,5 +79,12 @@ jobs:
               --key "Feature:AutoUpdate" \
               "${labelFlag[@]}" \
               --value "$AUTO_JSON" \
+              --content-type "application/json" \
+              --yes
+
+            az appconfig kv set --connection-string "$CS" \
+              --key "Feature:DataExplorer" \
+              "${labelFlag[@]}" \
+              --value "$DEX_JSON" \
               --content-type "application/json" \
               --yes
