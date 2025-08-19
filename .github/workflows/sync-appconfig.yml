@@ -1,12 +1,34 @@
+name: Sync Azure App Configuration (no OIDC) - BU repo
+
+on:
+  workflow_dispatch:
+    inputs:
+      targetEnv:
+        description: "Environment (dev/test/prod)"
+        required: true
+        default: "dev"
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.targetEnv }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Build JSON and push keys (Feature:AutoUpdate, Feature:DataExplorer)
         uses: azure/cli@v2
         with:
-          # Pin to a stable CLI if you want; otherwise omit to use the action's default.
+          # Optionally pin CLI version:
           # azcliversion: 2.62.0
           inlineScript: |
             set -euo pipefail
 
-            # Make the CLI auto-install any missing extension (no prompts)
+            # Auto-install any missing extensions (e.g., appconfig)
             az config set extension.use_dynamic_install=yes_without_prompt
             az --version
 
@@ -14,6 +36,7 @@
             CS='${{ secrets.APPCONFIG_CONNECTION_STRING }}'
             LABEL_RAW='${{ vars.TARGET_LABEL }}'
 
+            # Normalize label: allow sentinel for No label
             if [ "$LABEL_RAW" = "_NO_LABEL_" ] || [ -z "${LABEL_RAW:-}" ]; then
               LABEL=""
             else
@@ -23,21 +46,21 @@
             # ---------- Feature:AutoUpdate ----------
             AUTO_SCRIPT='VEStudio.schedule'
             AUTO_REPORT='laststatuses.txt'
-            AUTO_SAVE='false'      # keep as string unless your app expects JSON booleans
+            AUTO_SAVE='false'
             AUTO_EMAIL='false'
 
             # ---------- Feature:DataExplorer ----------
             DEX_READ_ROLE='DDT_DataExplorer'
-            DEX_MODIFY_ROLE='DDT_DataExplorer_Modify'
+            DEX_MODIFY_ROLE='DDT_Dataexplorer_Modify'
             STORAGE_ACCOUNT='${{ vars.STORAGE_ACCOUNT }}'
-            SHARE_USERCONTENT='usercontent'
+            SHARE_USERCONTENT='$usercontent'
 
             if [ -z "$CS" ]; then
               echo "ERROR: APPCONFIG_CONNECTION_STRING is not set for this environment."
               exit 1
             fi
 
-            # We only need jq; no need to apt-get the appconfig extension anymore
+            # Tools
             sudo apt-get update -y >/dev/null 2>&1 || true
             sudo apt-get install -y jq >/dev/null 2>&1
 
@@ -50,7 +73,8 @@
               echo "Using NO label"
             fi
 
-            # ---------- Build JSON values with jq ----------
+            # ---------- Build JSON values with jq (no escaping headaches) ----------
+            # Feature:AutoUpdate
             AUTO_JSON=$(jq -c -n \
               --arg script "$AUTO_SCRIPT" \
               --arg report "$AUTO_REPORT" \
@@ -61,9 +85,10 @@
                  SaveFullReport:$save,
                  SendReportByEmail:$email }')
 
-            # UNC base: \\<acct>.file.core.windows.net\<share>
+            # UNC base -> \\<account>.file.core.windows.net\<share>
             UNC_BASE="\\\\\\${STORAGE_ACCOUNT}.file.core.windows.net\\${SHARE_USERCONTENT}"
 
+            # Feature:DataExplorer
             DEX_JSON=$(jq -c -n \
               --arg readRole   "$DEX_READ_ROLE" \
               --arg modifyRole "$DEX_MODIFY_ROLE" \
