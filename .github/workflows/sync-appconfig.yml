@@ -38,15 +38,15 @@ jobs:
             LABEL_RAW='${{ vars.TARGET_LABEL }}'
 
             # Defaults for optional vars (so missing vars don't break the run)
-            AUTO_SCRIPT='${{ vars.AUTO_UPDATE_SCRIPT }}'
-            AUTO_REPORT='${{ vars.AUTO_UPDATE_REPORT }}'
-            AUTO_SAVE='${{ vars.AUTO_UPDATE_SAVE_FULL_REPORT }}'
-            AUTO_EMAIL='${{ vars.AUTO_UPDATE_SEND_EMAIL }}'
+            AUTO_SCRIPT='VEStudio.schedule'
+            AUTO_REPORT='laststatuses.txt}'
+            AUTO_SAVE='false'
+            AUTO_EMAIL='false'
 
-            DEX_READ_ROLE='${{ vars.DEX_READ_ROLE }}'
-            DEX_MODIFY_ROLE='${{ vars.DEX_MODIFY_ROLE }}'
+            DEX_READ_ROLE='DDT_Explorer'
+            DEX_MODIFY_ROLE='DDT_Modify'
             STORAGE_ACCOUNT='${{ vars.STORAGE_ACCOUNT }}'
-            SHARE_USERCONTENT='${{ vars.SHARE_USERCONTENT }}'
+            SHARE_USERCONTENT='usercontent'
 
             # Fallbacks if any var is empty (purely to make first runs easy)
             : "${AUTO_SCRIPT:=VEStudioC.schedule}"
@@ -84,36 +84,49 @@ jobs:
               exit 1
             fi
 
-            # ---------- Build JSON values with python -c (no heredocs, no YAML issues) ----------
-            AUTO_JSON="$("$PYTHON" -c 'import json,os; print(json.dumps({
+            # ---------- Build JSON values with Python (no jq, no escaping pain) ----------
+            export AUTO_SCRIPT AUTO_REPORT AUTO_SAVE AUTO_EMAIL
+            AUTO_JSON="$("$PYTHON" - <<'PY'
+            import json, os
+            obj = {
               "ScriptFileName": os.environ.get("AUTO_SCRIPT",""),
               "ReportFileName": os.environ.get("AUTO_REPORT",""),
+              # keep as strings unless you want real booleans (see note below)
               "SaveFullReport": os.environ.get("AUTO_SAVE",""),
-              "SendReportByEmail": os.environ.get("AUTO_EMAIL","")
-            }, separators=(",",":")))' )"
-
-            DEX_JSON="$("$PYTHON" -c 'import json,os
-            acct=os.environ.get("STORAGE_ACCOUNT","")
-            share="usercontent"
-            unc_base=f"\\\\\\\\{acct}.file.core.windows.net\\{share}" if acct else f"\\\\\\\\.invalid\\{share}"
-            print(json.dumps({
+              "SendReportByEmail": os.environ.get("AUTO_EMAIL",""),
+            }
+            print(json.dumps(obj, separators=(",",":")))
+            PY
+            )"
+            
+                        export DEX_READ_ROLE DEX_MODIFY_ROLE STORAGE_ACCOUNT SHARE_USERCONTENT
+                        DEX_JSON="$("$PYTHON" - <<'PY'
+            import json, os
+            acct  = os.environ.get("STORAGE_ACCOUNT","")
+            share = os.environ.get("SHARE_USERCONTENT","usercontent")
+            unc_base = f"\\\\\\\\{acct}.file.core.windows.net\\{share}" if acct else f"\\\\\\\\.invalid\\{share}"
+            obj = {
               "ReadRole": os.environ.get("DEX_READ_ROLE",""),
               "RequiredRoleToModify": os.environ.get("DEX_MODIFY_ROLE",""),
               "QueriesFolder": unc_base + "\\\\Queries",
-              "HighlightsFolder": unc_base + "\\\\Highlights"
-            }, separators=(",",":")))' )"
+              "HighlightsFolder": unc_base + "\\\\Highlights",
+            }
+            print(json.dumps(obj, separators=(",",":")))
+            PY
+            )"
+
+            echo "AutoUpdate JSON => $AUTO_JSON"
+            echo "DataExplorer JSON => $DEX_JSON"
 
             # ---------- Upsert JSON keys ----------
-            az appconfig kv set \
-              --connection-string "$CS" \
+            az appconfig kv set --connection-string "$CS" \
               --key "Feature:AutoUpdate" \
               "${labelFlag[@]}" \
               --value "$AUTO_JSON" \
               --content-type "application/json" \
               --yes
 
-            az appconfig kv set \
-              --connection-string "$CS" \
+            az appconfig kv set --connection-string "$CS" \
               --key "Feature:DataExplorer" \
               "${labelFlag[@]}" \
               --value "$DEX_JSON" \
