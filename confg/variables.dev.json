@@ -1,0 +1,14 @@
+{
+  "TARGET_LABEL": "Indexer",
+  "AUTO_UPDATE_SCRIPT": "VEStudioC.schedule",
+  "AUTO_UPDATE_REPORT": "laststatuses.txt",
+  "AUTO_UPDATE_SAVE_FULL_REPORT": false,
+  "AUTO_UPDATE_SEND_EMAIL": false,
+
+  "DEX_READ_ROLE": "DDT_DataExplorer",
+  "DEX_MODIFY_ROLE": "DDT_DataExplorer_Modify",
+
+  "STORAGE_ACCOUNT": "storageaccountname",
+  "SHARE_USERCONTENT": "usercontent"
+
+}
