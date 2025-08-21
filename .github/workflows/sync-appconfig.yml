@@ -23,10 +23,7 @@ jobs:
       - name: Render & push features
         uses: azure/cli@v2
         env:
-          # Required secret: App Config connection string (per env)
           APPCONFIG_CONNECTION_STRING: ${{ secrets.APPCONFIG_CONNECTION_STRING }}
-
-          # Optional overrides for values in variables.<env>.json (add more as needed)
           TARGET_LABEL: ${{ vars.TARGET_LABEL }}
           FUNCLOC_CLIENT_SECRET_URI: ${{ secrets.FUNCLOC_CLIENT_SECRET_URI }}
           FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_URI: ${{ secrets.FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_URI }}
@@ -34,15 +31,27 @@ jobs:
           inlineScript: |
             set -eo pipefail
             az config set extension.use_dynamic_install=yes_without_prompt
-            az --version
+
+            echo "PWD: $PWD"
+            echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
+            echo "Repo tree (top level):"
+            ls -la "$GITHUB_WORKSPACE"
+            echo "config/:"
+            ls -la "$GITHUB_WORKSPACE/config" || true
+            echo "scripts/:"
+            ls -la "$GITHUB_WORKSPACE/scripts" || true
 
             CS="${APPCONFIG_CONNECTION_STRING:?Missing APPCONFIG_CONNECTION_STRING}"
-            VARS_PATH="config/variables.${{ inputs.targetEnv }}.json"
+            FEATURES_PATH="$GITHUB_WORKSPACE/config/features.json"
+            VARS_PATH="$GITHUB_WORKSPACE/config/variables.${{ inputs.targetEnv }}.json"
             LABEL="${TARGET_LABEL:-}"
 
-            python3 scripts/sync_appconfig_from_json.py \
+            echo "Using FEATURES_PATH=$FEATURES_PATH"
+            echo "Using VARS_PATH=$VARS_PATH"
+
+            python3 "$GITHUB_WORKSPACE/scripts/sync_appconfig_from_json.py" \
               --connection-string "$CS" \
-              --features "config/features.json" \
+              --features "$FEATURES_PATH" \
               --vars "$VARS_PATH" \
               --label "$LABEL"
 

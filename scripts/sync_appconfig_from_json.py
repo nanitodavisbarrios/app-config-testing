@@ -8,7 +8,30 @@ def sh(cmd: list[str]) -> None:
     print("+", " ".join(subprocess.list2cmdline([c]) for c in cmd))
     subprocess.check_call(cmd)
 
-def load_json(path: str) -> Any:
+def resolve(path: str) -> str:
+    """Return an absolute path trying CWD, $GITHUB_WORKSPACE, and script_dir/.."""
+    if os.path.isabs(path):
+        return path
+    # Try as given (CWD)
+    cand = os.path.abspath(path)
+    if os.path.exists(cand):
+        return cand
+    # Try under GITHUB_WORKSPACE
+    gw = os.environ.get("GITHUB_WORKSPACE")
+    if gw:
+        cand = os.path.join(gw, path)
+        if os.path.exists(cand):
+            return cand
+    # Try relative to repo root (one up from scripts/)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
+    cand = os.path.join(repo_root, path)
+    if os.path.exists(cand):
+        return cand
+    return path  # fall back; caller will error
+
+def load_json(path: str):
+    path = resolve(path)
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
