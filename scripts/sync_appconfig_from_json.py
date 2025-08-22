@@ -32,8 +32,18 @@ def resolve(path: str) -> str:
 
 def load_json(path: str):
     path = resolve(path)
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    with open(path, "r", encoding="utf-8-sig") as f:   # -sig removes BOM if present
+        text = f.read()
+
+    # Remove // line comments
+    text = re.sub(r"//.*?$", "", text, flags=re.MULTILINE)
+    # Remove /* block comments */
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    # Remove trailing commas before } or ]
+    text = re.sub(r",\s*(\})", r"\1", text)
+    text = re.sub(r",\s*(\])", r"\1", text)
+
+    return json.loads(text)
 
 def build_context(vars_json: Dict[str, Any]) -> Dict[str, Any]:
     ctx = dict(vars_json)

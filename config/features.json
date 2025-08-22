@@ -1,0 +1,34 @@
+{
+  "features": [
+    {
+      "key": "Feature:AutoUpdate",
+      "type": "json",
+      "template": {
+        "ScriptFileName": "VEStudio.schedule",
+        "ReportFileName": "laststatuses.txt",
+        "SaveFullReport": "false",
+        "SendReportByEmail": "false"
+      }
+    },
+    {
+      "key": "Feature:DataExplorer",
+      "type": "json",
+      "template": {
+        "ReadRole": "DDT_Dataexplorer",
+        "RequiredRoleToModify": "DDT_Data_Modify",
+        "QueriesFolder": "${UNC_BASE}\\Queries",
+        "HighlightsFolder": "${UNC_BASE}\\Highlights"
+      }
+    },
+    {
+      "key": "Feature:FuncLocClientSecret",
+      "type": "kvref",
+      "secretVar": "FUNCLOC_CLIENT_SECRET_URI"
+    },
+    {
+      "key": "Feature:FuncLoc.OcpApimSubscriptionKey",
+      "type": "kvref",
+      "secretVar": "FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_URI"
+    }
+  ]
+}

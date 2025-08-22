@@ -48,6 +48,11 @@ jobs:
 
             echo "Using FEATURES_PATH=$FEATURES_PATH"
             echo "Using VARS_PATH=$VARS_PATH"
+            
+            echo "----- HEAD of features.json -----"
+            sed -n '1,80p' "$FEATURES_PATH" || true
+            echo "----- HEAD of variables.json -----"
+            sed -n '1,80p' "$VARS_PATH" || true
 
             python3 "$GITHUB_WORKSPACE/scripts/sync_appconfig_from_json.py" \
               --connection-string "$CS" \
