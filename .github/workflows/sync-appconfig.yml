@@ -122,24 +122,44 @@ jobs:
               'json' {
                 $rendered = Resolve-Template $f.template $ctx
                 $jsonVal  = $rendered | ConvertTo-Json -Depth 64 -Compress
-                Write-Host "Upserting JSON $key (label=$label)"
-                az appconfig kv set @acArgs --key $key @labelArgs --value $jsonVal --content-type 'application/json' --yes
+
+                # write JSON to a temp file so az can read it verbatim
+                $tmp = New-TemporaryFile
+                Set-Content -LiteralPath $tmp -Value $jsonVal -Encoding utf8 -NoNewline
+
+                Write-Host ("Upserting JSON {0} (label={1})" -f $key, $label)
+                az appconfig kv set @acArgs --key $key @labelArgs --value "@$tmp" --content-type 'application/json' --yes
+
+                Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
               }
+
               'string' {
                 $rendered = Resolve-Template $f.value $ctx
                 $str = if ($rendered -is [string]) { $rendered } else { ($rendered | ConvertTo-Json -Compress -Depth 8) }
-                Write-Host "Upserting STRING $key (label=$label)"
-                az appconfig kv set @acArgs --key $key @labelArgs --value $str --content-type 'text/plain' --yes
+
+                # use a temp file here too to avoid any quoting surprises
+                $tmp = New-TemporaryFile
+                Set-Content -LiteralPath $tmp -Value $str -Encoding utf8 -NoNewline
+
+                Write-Host ("Upserting STRING {0} (label={1})" -f $key, $label)
+                az appconfig kv set @acArgs --key $key @labelArgs --value "@$tmp" --content-type 'text/plain' --yes
+
+                Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
               }
+
               'kvref' {
                 $varName  = $f.secretVar
                 $secretId = $ctx[$varName]
-                if (-not $secretId) { Write-Host "Skipping ${key}: ${varName} not set"; break }
-                Write-Host "Upserting KVREF $key (label=$label) from $varName"
+                if (-not $secretId) {
+                  Write-Host ("Skipping {0}: {1} not set" -f $key, $varName)
+                  continue
+                }
+                Write-Host ("Upserting KVREF {0} (label={1}) from {2}" -f $key, $label, $varName)
                 az appconfig kv set-keyvault @acArgs --key $key @labelArgs --secret-identifier $secretId --yes
               }
+
               default {
-                Write-Host "Unknown type '$type' for $key; skipping."
+                Write-Host ("Unknown type '{0}' for {1}; skipping." -f $type, $key)
               }
             }
           }
