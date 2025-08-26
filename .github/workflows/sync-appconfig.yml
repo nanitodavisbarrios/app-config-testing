@@ -41,10 +41,7 @@ jobs:
             # Paths in your repo
             FEATURES_PATH: config/features.json
             VARS_PATH:     config/variables.dev.json
-
-            # Optional: any variables/secrets referenced by features.json (override .json values)
-            FUNCLOC_CLIENT_SECRET_URI: sdfasdfasdfasfdsdfsdfasdfrth #{{ secrets.FUNCLOC_CLIENT_SECRET_URI }}
-            FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_URI: adfasdfhrykjryiulmtgumjrtuktrk #{{ secrets.FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_URI }}
+            
         run: |
           $ErrorActionPreference = 'Stop'
           az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
