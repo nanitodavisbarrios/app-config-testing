@@ -25,7 +25,7 @@ jobs:
     if: ${{ inputs.runDev == 'true' }}
     name: Sync to DEV
     runs-on: windows-latest
-    environment: CANADA-DEV
+    environment: dev
     steps:
       - name: Checkout
         uses: actions/checkout@v4
