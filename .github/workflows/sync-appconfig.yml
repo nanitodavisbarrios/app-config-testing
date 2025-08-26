@@ -1,4 +1,4 @@
-name: Sync Azure App Configuration (YAML only, no login)
+name: Sync Azure App Configuration
 
 on:
   workflow_dispatch:
@@ -137,7 +137,7 @@ jobs:
               'kvref' {
                 $varName  = $f.secretVar
                 $secretId = $ctx[$varName]
-                if (-not $secretId) { Write-Host "Skipping $key: $varName not set"; break }
+                if (-not $secretId) { Write-Host "Skipping ${key:} ${varName} not set"; break }
                 Write-Host "Upserting KVREF $key (label=$label) from $varName"
                 az appconfig kv set-keyvault @acArgs --key $key @labelArgs --secret-identifier $secretId --yes
               }
