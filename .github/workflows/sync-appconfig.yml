@@ -1,81 +1,254 @@
-name: Sync Azure App Configuration (templates + vars)
+name: Sync Azure App Configuration (templates + vars, YAML only)
 
 on:
   workflow_dispatch:
     inputs:
-      targetEnv:
-        description: "Environment (dev/test/prod)"
+      runDev:
+        description: "Run DEV stage?"
         required: true
-        default: "dev"
+        default: "true"
+      runTest:
+        description: "Run TEST stage?"
+        required: true
+        default: "true"
+      runProd:
+        description: "Run PROD stage?"
+        required: true
+        default: "false"
 
 permissions:
+  id-token: write
   contents: read
 
+# ---------------- DEV ----------------
 jobs:
-  sync:
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.targetEnv }}
-
+  sync_dev:
+    if: ${{ inputs.runDev == 'true' }}
+    name: Sync to DEV
+    runs-on: windows-latest
+    environment: APLNG-DEV
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Render & push features
-        uses: azure/cli@v2
-        env:
-          APPCONFIG_CONNECTION_STRING: ${{ secrets.APPCONFIG_CONNECTION_STRING }}
-          TARGET_LABEL: ${{ vars.TARGET_LABEL }}
-          FUNCLOC_CLIENT_SECRET_URI: ${{ secrets.FUNCLOC_CLIENT_SECRET_URI }}
-          FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_URI: ${{ secrets.FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_URI }}
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
         with:
-          inlineScript: |
-            set -eo pipefail
-            az config set extension.use_dynamic_install=yes_without_prompt
+          client-id:        ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:        ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id:  ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-            echo "PWD: $PWD"
-            echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
-            echo "Repo tree (top level):"
-            ls -la "$GITHUB_WORKSPACE"
-            echo "config/:"
-            ls -la "$GITHUB_WORKSPACE/config" || true
-            echo "scripts/:"
-            ls -la "$GITHUB_WORKSPACE/scripts" || true
-
-            CS="${APPCONFIG_CONNECTION_STRING:?Missing APPCONFIG_CONNECTION_STRING}"
-            FEATURES_PATH="$GITHUB_WORKSPACE/config/features.json"
-            VARS_PATH="$GITHUB_WORKSPACE/config/variables.${{ inputs.targetEnv }}.json"
-            LABEL="${TARGET_LABEL:-}"
-
-            echo "Using FEATURES_PATH=$FEATURES_PATH"
-            echo "Using VARS_PATH=$VARS_PATH"
-            
-            echo "----- HEAD of features.json -----"
-            sed -n '1,80p' "$FEATURES_PATH" || true
-            echo "----- HEAD of variables.json -----"
-            sed -n '1,80p' "$VARS_PATH" || true
-
-            python3 "$GITHUB_WORKSPACE/scripts/sync_appconfig_from_json.py" \
-              --connection-string "$CS" \
-              --features "$FEATURES_PATH" \
-              --vars "$VARS_PATH" \
-              --label "$LABEL"
-
-      - name: Summary (optional)
-        if: always()
-        uses: azure/cli@v2
+      - name: Render & push features (DEV)
+        shell: pwsh
         env:
-          APPCONFIG_CONNECTION_STRING: ${{ secrets.APPCONFIG_CONNECTION_STRING }}
-          TARGET_LABEL: ${{ vars.TARGET_LABEL }}
+          # Choose ONE of these models:
+          #  - RBAC: give this principal App Configuration Data Owner and set APP_CONFIG_NAME
+          #  - Connection string: store APPCONFIG_CONNECTION_STRING as an env secret
+          APP_CONFIG_NAME: ${{ vars.APP_CONFIG_NAME }}                       # e.g., appcs-myapp-dev  (RBAC)
+          APPCONFIG_CONNECTION_STRING: ${{ secrets.APPCONFIG_CONNECTION_STRING }}  # alt: connection string
+
+          FEATURES_PATH: config/features.json
+          VARS_PATH:     config/variables.dev.json
+
+          # Optional variables/secrets override values in variables.dev.json by name:
+          TARGET_LABEL: ${{ vars.TARGET_LABEL }}   # e.g., Indexer or _NO_LABEL_
+          FUNCLOC_CLIENT_SECRET_URI: sdfasdfasdfasfdsdfsdfasdfrth #{{ secrets.FUNCLOC_CLIENT_SECRET_URI }}
+          FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_URI: adfasdfhrykjryiulmtgumjrtuktrk #{{ secrets.FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_URI }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # Let az auto-install extensions on demand (appconfig)
+          az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
+
+          # --- Helpers ----------------------------------------------------
+          function Read-JsonStrictish([string]$Path) {
+            $text = Get-Content -LiteralPath $Path -Raw -Encoding utf8
+            # strip // line comments
+            $text = [regex]::Replace($text, '(?m)^\s*//.*$', '')
+            # strip /* block comments */
+            $text = [regex]::Replace($text, '(?s)/\*.*?\*/', '')
+            # strip trailing commas
+            $text = [regex]::Replace($text, ',\s*(\})', '$1')
+            $text = [regex]::Replace($text, ',\s*(\])', '$1')
+            return $text | ConvertFrom-Json -Depth 100
+          }
+
+          function To-Hashtable($obj) {
+            if ($null -eq $obj) { return $null }
+            if ($obj -is [pscustomobject]) {
+              $h=@{}
+              foreach ($p in $obj.PSObject.Properties) { $h[$p.Name] = To-Hashtable $p.Value }
+              return $h
+            }
+            elseif ($obj -is [System.Collections.IDictionary]) {
+              $h=@{}
+              foreach ($k in $obj.Keys) { $h[$k] = To-Hashtable $obj[$k] }
+              return $h
+            }
+            elseif ($obj -is [System.Collections.IList]) {
+              $arr=@()
+              foreach ($v in $obj) { $arr += ,(To-Hashtable $v) }
+              return $arr
+            }
+            else { return $obj }
+          }
+
+          function Resolve-Template($node, $ctx) {
+            if ($node -is [string]) {
+              $m = [regex]::Match($node, '^\$\{([A-Z0-9_]+)\}$')
+              if ($m.Success) {
+                $name = $m.Groups[1].Value
+                return $ctx[$name]
+              }
+              return [regex]::Replace($node, '\$\{([A-Z0-9_]+)\}', { param($m) [string]$ctx[$m.Groups[1].Value] })
+            }
+            elseif ($node -is [pscustomobject] -or $node -is [System.Collections.IDictionary]) {
+              $h = @{}
+              $props = @()
+              if ($node -is [pscustomobject]) { $props = $node.PSObject.Properties | ForEach-Object { $_.Name } }
+              else { $props = $node.Keys }
+              foreach ($k in $props) { $h[$k] = Resolve-Template $node.$k $ctx }
+              return $h
+            }
+            elseif ($node -is [System.Collections.IList]) {
+              $arr = @()
+              foreach ($v in $node) { $arr += ,(Resolve-Template $v $ctx) }
+              return $arr
+            }
+            else { return $node }
+          }
+
+          # --- Inputs / context ------------------------------------------
+          $featuresPath = Join-Path $env:GITHUB_WORKSPACE $env:FEATURES_PATH
+          $varsPath     = Join-Path $env:GITHUB_WORKSPACE $env:VARS_PATH
+          Write-Host "Features: $featuresPath"
+          Write-Host "Vars:     $varsPath"
+
+          $features = Read-JsonStrictish $featuresPath
+          $varsObj  = Read-JsonStrictish $varsPath
+          $ctx      = To-Hashtable $varsObj
+
+          # Overlay any env variables with same names (GH env/secret wins)
+          Get-ChildItem Env: | ForEach-Object {
+            $k=$_.Name; $v=$_.Value
+            if ($ctx.ContainsKey($k) -and ($ctx[$k] -is [bool])) {
+              $ctx[$k] = ($v -match '^(?i:true|1)$')
+            } else {
+              $ctx[$k] = $v
+            }
+          }
+
+          # Derive UNC_BASE if not present
+          if (-not $ctx.ContainsKey('UNC_BASE')) {
+            $acct = $ctx['STORAGE_ACCOUNT']
+            $share = if ($ctx['SHARE_USERCONTENT']) { $ctx['SHARE_USERCONTENT'] } else { 'usercontent' }
+            if ($acct) { $ctx['UNC_BASE'] = "\\$acct.file.core.windows.net\$share" }
+            else { $ctx['UNC_BASE'] = "\\.invalid\$share" }
+          }
+
+          # Label handling
+          $label = $ctx['TARGET_LABEL']
+          $labelArgs = @()
+          if ($label -and $label -ne '_NO_LABEL_') { $labelArgs = @('--label', $label) }
+
+          # Use either --name or --connection-string depending on what you provided
+          if ($env:APP_CONFIG_NAME)      { $acArgs = @('--name', $env:APP_CONFIG_NAME) }
+          elseif ($env:APPCONFIG_CONNECTION_STRING) { $acArgs = @('--connection-string', $env:APPCONFIG_CONNECTION_STRING) }
+          else { throw "Provide APP_CONFIG_NAME (RBAC) or APPCONFIG_CONNECTION_STRING (access key)"; }
+
+          # --- Push all features -----------------------------------------
+          foreach ($f in $features.features) {
+            $key  = $f.key
+            $type = if ($f.type) { $f.type } else { 'json' }
+
+            switch ($type) {
+              'json' {
+                $rendered = Resolve-Template $f.template $ctx
+                $jsonVal  = $rendered | ConvertTo-Json -Depth 64 -Compress
+                Write-Host "Upserting JSON key $key (label=$label)"
+                az appconfig kv set @acArgs --key $key @labelArgs --value $jsonVal --content-type 'application/json' --yes
+              }
+              'string' {
+                $rendered = Resolve-Template $f.value $ctx
+                $str = if ($rendered -is [string]) { $rendered } else { ($rendered | ConvertTo-Json -Compress -Depth 8) }
+                Write-Host "Upserting string key $key (label=$label)"
+                az appconfig kv set @acArgs --key $key @labelArgs --value $str --content-type 'text/plain' --yes
+              }
+              'kvref' {
+                $varName  = $f.secretVar
+                $secretId = $ctx[$varName]
+                if (-not $secretId) { Write-Host "Skipping $key: $varName not set"; break }
+                Write-Host "Upserting KV reference $key (label=$label) from $varName"
+                az appconfig kv set-keyvault @acArgs --key $key @labelArgs --secret-identifier $secretId --yes
+              }
+              default {
+                Write-Host "Unknown type '$type' for $key; skipping."
+              }
+            }
+          }
+
+          # Optional summary
+          if ($env:APP_CONFIG_NAME) {
+            az appconfig kv list --name $env:APP_CONFIG_NAME @labelArgs --key "Feature:*" `
+              --query "[].{key:key,label:label,contentType:content_type,lastModified:last_modified}" -o table
+          } elseif ($env:APPCONFIG_CONNECTION_STRING) {
+            az appconfig kv list --connection-string $env:APPCONFIG_CONNECTION_STRING @labelArgs --key "Feature:*" `
+              --query "[].{key:key,label:label,contentType:content_type,lastModified:last_modified}" -o table
+          }
+
+  # -------------- TEST --------------
+  sync_test:
+    if: ${{ inputs.runTest == 'true' }}
+    name: Sync to TEST
+    runs-on: windows-latest
+    environment: APLNG-TST
+    needs: [sync_dev]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
         with:
-          inlineScript: |
-            set -eo pipefail
-            labelFlag=()
-            if [ -n "${TARGET_LABEL:-}" ] && [ "${TARGET_LABEL}" != "_NO_LABEL_" ]; then
-              labelFlag+=(--label "${TARGET_LABEL}")
-            fi
-            az appconfig kv list \
-              --connection-string "${APPCONFIG_CONNECTION_STRING}" \
-              "${labelFlag[@]}" \
-              --key "Feature:*" \
-              --query "[].{key:key,label:label,contentType:content_type,lastModified:last_modified}" \
-              -o table
+          client-id:        ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:        ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id:  ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Render & push features (TEST)
+        shell: pwsh
+        env:
+          APP_CONFIG_NAME: ${{ vars.APP_CONFIG_NAME }}
+          APPCONFIG_CONNECTION_STRING: ${{ secrets.APPCONFIG_CONNECTION_STRING }}
+          FEATURES_PATH: config/features.json
+          VARS_PATH:     config/variables.test.json
+          TARGET_LABEL: ${{ vars.TARGET_LABEL }}
+          FUNCLOC_CLIENT_SECRET_URI: sdfasdfasdfasfdsdfsdfasdfrth #{{ secrets.FUNCLOC_CLIENT_SECRET_URI }}
+          FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_URI: adfasdfhrykjryiulmtgumjrtuktrk #{{ secrets.FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_URI }}
+        run: |
+          # same script body as DEV step above
+          # (copy/paste the whole pwsh block)
+          Write-Host "See DEV step for full script; keep VARS_PATH pointing to variables.test.json"
+
+  # -------------- PROD --------------
+  sync_prod:
+    if: ${{ inputs.runProd == 'true' }}
+    name: Sync to PROD
+    runs-on: windows-latest
+    environment: APLNG-PRD
+    needs: [sync_test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id:        ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:        ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id:  ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Render & push features (PROD)
+        shell: pwsh
+        env:
+          APP_CONFIG_NAME: ${{ vars.APP_CONFIG_NAME }}
+          APPCONFIG_CONNECTION_STRING: ${{ secrets.APPCONFIG_CONNECTION_STRING }}
+          FEATURES_PATH: config/features.json
+          VARS_PATH:     config/variables.prod.json
+          TARGET_LABEL: ${{ vars.TARGET_LABEL }}
+          FUNCLOC_CLIENT_SECRET_URI: sdfasdfasdfasfdsdfsdfasdfrth #{{ secrets.FUNCLOC_CLIENT_SECRET_URI }}
+          FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_URI: adfasdfhrykjryiulmtgumjrtuktrk #{{ secrets.FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_URI }}
+        run: |
+          # same script body as DEV step above
+          Write-Host "See DEV step for full script; keep VARS_PATH pointing to variables.prod.json"
