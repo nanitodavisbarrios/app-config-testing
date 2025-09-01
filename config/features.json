@@ -4,31 +4,199 @@
       "key": "Feature:AutoUpdate",
       "type": "json",
       "template": {
-        "ScriptFileName": "VEStudio.schedule",
+        "ScriptFileName": "VEStudioC.schedule",
         "ReportFileName": "laststatuses.txt",
         "SaveFullReport": "false",
         "SendReportByEmail": "false"
       }
     },
     {
-      "key": "Feature:DataExplorer",
+      "key": "Feature:Azure",
       "type": "json",
       "template": {
-        "ReadRole": "DDT_Dataexplorer",
-        "RequiredRoleToModify": "DDT_Data_Modify",
-        "QueriesFolder": "${UNC_BASE}\\Queries",
-        "HighlightsFolder": "${UNC_BASE}\\Highlights"
+        "UseIntegratedWindowsAuth": "true",
+        "TenantId": "${AZURE_TENANT_ID}",
+        "ClientId": "${AZURE_CLIENT_ID}"
       }
     },
     {
-      "key": "Feature:FuncLocClientSecret",
-      "type": "kvref",
-      "secretVar": "FUNCLOC_CLIENT_SECRET_URI"
+      "key": "Feature:DataExplorer",
+      "type": "json",
+      "template": {
+        "ReadRole": "DDT_DataExplorer",
+        "RequiredRoleToModify": "DDT_DataExplorer_Modify",
+        "QueriesFolder": "\\\\${STORAGE_ACCOUNT}.file.core.windows.net\\usercontent\\Queries",
+        "HighlightsFolder": "\\\\${STORAGE_ACCOUNT}.file.core.windows.net\\usercontent\\Highlights"
+      }
     },
     {
-      "key": "Feature:FuncLoc.OcpApimSubscriptionKey",
-      "type": "kvref",
-      "secretVar": "FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_URI"
-    }
+      "key": "Feature:DisabledCogs",
+      "type": "json",
+      "template": {
+        "CogNames": []
+      }
+    },
+    {
+      "key": "Feature:FuncLoc",
+      "type": "json",
+      "template": {
+        "AADInstance": "https://login.microsoftonline.com/{0}/oauth2/v2.0/token",
+        "TenantId": "${FUNCLOC_TENANT_ID}",
+        "ClientId": "${FUNCLOC_CLIENT_ID}",
+        "Scopes": "api://${FUNCLOC_API_ID}/.default",
+        "ClientTimeout": "200",
+        "ApiVersion": "v1",
+        "Address": "https://${FUNCLOC_HOST}/gdt/can/cog/dataapi/ctdb",
+        "QueryPattern": "&$orderby=FLOC_LABEL&$top={0}&{1}",
+        "Select": "$filter=DT_PROJECT eq '{0}'",
+        "DataHandlerCode": "CA",
+        "MaxPageSize": 10000,
+        "MaxRecordsToLoad": 300000
+      }
+    },
+    {
+      "key": "Feature:General",
+      "type": "json",
+      "template": {
+        "CompanyName": "COPCA",
+        "Product": "vCog CoPCa",
+        "RequiredADRole": "DDT_General",
+        "UserDomainName": "conoco.net",
+        "vCogScope": "api://${VCOG_APP_ID}/scope.vcog",
+        "DefaultProjectRoot": "\\\\${STORAGE_ACCOUNT}.file.core.windows.net\\projectcontent\\SHARED-VCOG-PROJECTS"
+      }
+    },
+    {
+      "key": "Feature:Maintenance",
+      "type": "json",
+      "template": {
+        "ReadRole": "DDT_Maintenance",
+        "DefaultDateRange": "14",
+        "ConnectionString": "https://${SAP_HOST}/sap/",
+        "Scope": "api://${MAINT_APP_ID}/user_impersonation",
+        "RequestHeaders": {
+          "correlationid": "DTNO_#dateyyyyMMddHHmmss",
+          "Api-Version": "v1"
+        },
+        "PlannerGroupQuery": {
+          "QueryBase": "omplannergroup/getplannergroup?$format=json&$top={limit}&$skip={offset}&$filter=Plant eq '{platform}'&$inlinecount=allpages",
+          "RequestLimit": "5000"
+        },
+        "WorkCenterQuery": {
+          "QueryBase": "workcenters/getworkcenters?$format=json&$top={limit}&$skip={offset}&$inlinecount=allpages&$select=WorkCenter,WorkCenterDesc,Plant",
+          "RequestLimit": "5000"
+        },
+        "WorkOrderQuery": {
+          "QueryBase": "maintenanceorder/v1/getmaintenanceorder?$format=json&$top={limit}&$skip={offset}&$inlinecount=allpages&$filter=MaintenancePlanningPlant eq '{platform}' and (ScheduledBasicStartDate le datetime'{toDate}' and ScheduledBasicEndDate ge datetime'{fromDate}' ) and {statusFilter}&$expand=to_MaintOrderObjectListItem,to_MaintenanceOrderOperation&$select=MaintOrdProcessSubPhaseCode,MaintenanceOrder,MaintenanceOrderType,MaintenanceOrderDesc,MaintenancePlannerGroup,MaintenancePlanningPlant,MainWorkCenter,ScheduledBasicStartDate,ScheduledBasicEndDate,TechnicalObjectLabel,MaintenanceNotification,SuperiorProjectNetwork,to_MaintenanceOrderOperation/MaintenanceOrderOperation,to_MaintenanceOrderOperation/WorkCenter,to_MaintenanceOrderOperation/OperationDescription,to_MaintOrderObjectListItem/MaintenanceObjectListItem,to_MaintOrderObjectListItem/FunctionalLocation",
+          "TypeField": "MaintenanceOrderType",
+          "StatusCodeField": "MaintOrdProcessSubPhaseCode",
+          "DateFormat": "s",
+          "RequestLimit": "5000"
+        },
+        "NotificationQuery": {
+          "QueryBase": "maintenancenotification/v1/getnotifications?$format=json&$top={limit}&$skip={offset}&$inlinecount=allpages&$filter=MaintenancePlanningPlant eq '{platform}' and {statusFilter}&$select=MaintenanceNotification,MaintenancePlannerGroup,MaintenancePlannerGroupName,NotificationType,NotificationText,RequiredStartDate,RequiredEndDate,FunctionalLocationLabelName,TechnicalObjectDescription,MaintNotifProcessSubPhaseCode,EAMProcessSubPhaseCodeDesc,MainWorkCenter,MainWorkCenterText",
+          "TypeField": "NotificationType",
+          "StatusCodeField": "MaintNotifProcessSubPhaseCode",
+          "DateFormat": "s",
+          "RequestLimit": "5000"
+        },
+        "MocQuery": {
+          "QueryBase": "moc/v1/getheaderdata?$format=json&$top={limit}&$skip={offset}&$inlinecount=allpages&$filter=Maintenance_Plant eq '{platform}' and {statusFilter}",
+          "TypeField": "issue_Type",
+          "StatusCodeField": "User_Status_01",
+          "DateFormat": "yyyyMMdd",
+          "RequestLimit": "500"
+        },
+        "SapOrderAccessUrl": "https://${SAP_HOST}/sap/bc/ui2/flp?sap-client=100&sap-language=EN#MaintenanceOrder-displayFactSheet&/C_ObjPgMaintOrder('{recordid}')",
+        "SapNotificationAccessUrl": "https://${SAP_HOST}/sap/bc/ui2/flp?sap-client=100&sap-language=EN#MaintenanceNotification-displayFactSheet&/C_ObjPgMaintNotification('{recordid}')",
+        "SapMocAccessUrl": "https://${SAP_HOST}/sap/bc/ui2/flp?sap-client=100&sap-language=EN#ChangeManagementRequest-display?ChgMgmtRequest={recordid}",
+        "Statuses": {
+          "PM01_0035": "In Planning;workorder",
+          "PM01_0040": "Submitted for Approval;workorder",
+          "PM01_0045": "Approved;workorder",
+          "PM01_0050": "Rejected;workorder",
+          "PM01_0055": "In Preparation;workorder",
+          "PM01_0060": "Ready to Schedule;workorder",
+          "PM01_0065": "Ready for Execution;workorder",
+          "PM01_0070": "Main Work Started;workorder",
+          "PM01_0075": "Main Work Completed;workorder",
+          "PM01_0080": "Work Done;workorder",
+          "PM01_default": "0035;0040;0045;0055;0060;0065;0070",
+          "PM01_color": "008000",
+          "PM02_0035": "In Planning;workorder",
+          "PM02_0040": "Submitted for Approval;workorder",
+          "PM02_0045": "Approved;workorder",
+          "PM02_0050": "Rejected;workorder",
+          "PM02_0055": "In Preparation;workorder",
+          "PM02_0060": "Ready to Schedule;workorder",
+          "PM02_0065": "Ready for Execution;workorder",
+          "PM02_0070": "Main Work Started;workorder",
+          "PM02_0075": "Main Work Completed;workorder",
+          "PM02_0080": "Work Done;workorder",
+          "PM02_default": "0035;0040;0045;0055;0060;0065;0070",
+          "PM02_color": "32CD32",
+          "M1_0005": "Submitted;notification",
+          "M1_0010": "Accepted;notification",
+          "M1_0020": "Action Required;notification",
+          "M1_0025": "Resubmitted;notification",
+          "M1_0030": "Order Assigned;notification",
+          "M1_default": "0005;0010;0020;0025",
+          "M1_color": "FFA500",
+          "M3_0005": "Submitted;notification",
+          "M3_0010": "Accepted;notification",
+          "M3_0020": "Action Required;notification",
+          "M3_0025": "Resubmitted;notification",
+          "M3_0030": "Order Assigned;notification",
+          "M3_default": "0005;0010;0020;0025",
+          "M3_color": "CC5500",
+          "CA4_Z1": "Being Evaluated;moc",
+          "CA4_Z2": "Awaiting Approval to Execute;moc",
+          "CA4_Z3": "Approval to Execute;moc",
+          "CA4_Z4": "In-Execution;moc",
+          "CA4_Z5": "Approval to Start-up;moc",
+          "CA4_Z6": "Closed;moc",
+          "CA4_default": "Z1;Z2;Z3;Z4;Z5",
+          "CA4_color": "D8BFD8",
+          "CA5_Z1": "Being Evaluated;moc",
+          "CA5_Z2": "Awaiting Approval to Execute;moc",
+          "CA5_Z3": "Approval to Execute;moc",
+          "CA5_Z4": "In-Execution;moc",
+          "CA5_Z5": "Approval to Start-up;moc",
+          "CA5_Z6": "Closed;moc",
+          "CA5_default": "Z1;Z2;Z3;Z4;Z5",
+          "CA5_color": "DA70D6",
+          "CA9_Z1": "Being Evaluated;moc",
+          "CA9_Z2": "Awaiting Approval to Execute;moc",
+          "CA9_Z3": "Approval to Execute;moc",
+          "CA9_Z4": "In-Execution;moc",
+          "CA9_Z5": "Approval to Start-up;moc",
+          "CA9_Z6": "Closed;moc",
+          "CA9_default": "Z1;Z2;Z3;Z4;Z5",
+          "CA9_color": "BA55D3",
+          "ZCP_Z1": "Being Evaluated;moc",
+          "ZCP_Z2": "Awaiting Approval to Execute;moc",
+          "ZCP_Z3": "Approval to Execute;moc",
+          "ZCP_Z4": "In-Execution;moc",
+          "ZCP_Z5": "Approval to Start-up;moc",
+          "ZCP_Z6": "Closed;moc",
+          "ZCP_default": "Z1;Z2;Z3;Z4;Z5",
+          "ZCP_color": "9932CC",
+          "Default": "PM01;PM02;M1;M3;CA4;CA5;CA9;ZCP",
+          "TypeRenderOrder": "CA4;CA5;CA9;ZCP;PM01;PM02;M1;M3"
+        }
+      }
+    },
+    {
+      "key": "Feature:ProjectServer",
+      "type": "json",
+      "template": {
+        "enable": "false"
+      }
+    },
+    { "key": "Feature:DataExplorer:EncryptionIV",  "type": "kvref", "secretVar": "DATAEXPLORER_ENCRYPTION_IV_SECRET"  },
+    { "key": "Feature:DataExplorer:EncryptionKey", "type": "kvref", "secretVar": "DATAEXPLORER_ENCRYPTION_KEY_SECRET" },
+    { "key": "Feature:FuncLoc:ClientSecret",       "type": "kvref", "secretVar": "FUNCLOC_CLIENT_SECRET"              },
+    { "key": "Feature:FuncLoc.OcpApimSubscriptionKey", "type": "kvref", "secretVar": "FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_SECRET" },
+    { "key": "Feature:Maintenance:RequestHeaders:Ocp-Apim-Subscription-Key", "type": "kvref", "secretVar": "MAINTENANCE_OCPAPIM_SUBSCRIPTION_KEY_SECRET" }
   ]
 }
