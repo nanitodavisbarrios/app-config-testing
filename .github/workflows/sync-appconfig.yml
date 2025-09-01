@@ -117,7 +117,17 @@ jobs:
           foreach ($f in $features.features) {
             $key  = $f.key
             $type = if ($f.type) { $f.type } else { 'json' }
-
+            
+            # -------- per-feature label override --------
+            $featureLabel = $label   # inherit default from environment/vars
+            if ($f | Get-Member -Name label -MemberType NoteProperty) {
+              $raw = $f.label
+              # allow placeholders in label, e.g. "${TARGET_LABEL}" or custom
+              if ($raw -is [string]) { $featureLabel = Resolve-Template $raw $ctx } else { $featureLabel = $raw }
+            }
+            $labelArgsLocal = @()
+            if ($featureLabel -and $featureLabel -ne '_NO_LABEL_') { $labelArgsLocal = @('--label', $featureLabel) }
+            
             switch ($type) {
               'json' {
                 $rendered = Resolve-Template $f.template $ctx
@@ -127,8 +137,8 @@ jobs:
                 $tmp = New-TemporaryFile
                 Set-Content -LiteralPath $tmp -Value $jsonVal -Encoding utf8 -NoNewline
 
-                Write-Host ("Upserting JSON {0} (label={1})" -f $key, $label)
-                az appconfig kv set @acArgs --key $key @labelArgs --value "@$tmp" --content-type 'application/json' --yes
+                Write-Host ("Upserting JSON {0} (label={1})" -f $key, ($featureLabel ? $featureLabel : '(No label)'))
+                az appconfig kv set @acArgs --key $key @labelArgsLocal --value "@$tmp" --content-type 'application/json' --yes
 
                 Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
               }
@@ -141,8 +151,8 @@ jobs:
                 $tmp = New-TemporaryFile
                 Set-Content -LiteralPath $tmp -Value $str -Encoding utf8 -NoNewline
 
-                Write-Host ("Upserting STRING {0} (label={1})" -f $key, $label)
-                az appconfig kv set @acArgs --key $key @labelArgs --value "@$tmp" --content-type 'text/plain' --yes
+                Write-Host ("Upserting STRING {0} (label={1})" -f $key, ($featureLabel ? $featureLabel : '(No label)'))
+                az appconfig kv set @acArgs --key $key @labelArgsLocal --value "@$tmp" --content-type 'text/plain' --yes
 
                 Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
               }
@@ -154,8 +164,16 @@ jobs:
                   Write-Host ("Skipping {0}: {1} not set" -f $key, $varName)
                   continue
                 }
-                Write-Host ("Upserting KVREF {0} (label={1}) from {2}" -f $key, $label, $varName)
-                az appconfig kv set-keyvault @acArgs --key $key @labelArgs --secret-identifier $secretId --yes
+
+                if ($val -like 'https://*') {
+                  $secretId = $val
+                } else {
+                  $kvName = $ctx['KEYVAULT_NAME']
+                  if (-not $kvName) { throw "KEYVAULT_NAME missing in variables file; needed for $key." }
+                  $secretId = "https://$kvName.vault.azure.net/secrets/$val"  # no version → always latest
+                }
+                Write-Host ("Upserting KVREF {0} (label={1}) -> {2}" -f $key, ($featureLabel ? $featureLabel : '(No label)'), $secretId)
+                az appconfig kv set-keyvault @acArgs --key $key @labelArgsLocal --secret-identifier $secretId --yes
               }
 
               default {

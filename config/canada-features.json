@@ -12,6 +12,7 @@
     },
     {
       "key": "Feature:Azure",
+      "label": "_NO_LABEL_",
       "type": "json",
       "template": {
         "UseIntegratedWindowsAuth": "true",
@@ -38,6 +39,7 @@
     },
     {
       "key": "Feature:FuncLoc",
+      "label": "_NO_LABEL_",
       "type": "json",
       "template": {
         "AADInstance": "https://login.microsoftonline.com/{0}/oauth2/v2.0/token",
@@ -193,10 +195,10 @@
         "enable": "false"
       }
     },
-    { "key": "Feature:DataExplorer:EncryptionIV",  "type": "kvref", "secretVar": "DATAEXPLORER_ENCRYPTION_IV_SECRET"  },
-    { "key": "Feature:DataExplorer:EncryptionKey", "type": "kvref", "secretVar": "DATAEXPLORER_ENCRYPTION_KEY_SECRET" },
+    { "key": "Feature:DataExplorer:EncryptionIV",  "type": "kvref", "secretVar": "DATAEXPLORER_ENCRYPTION_IV_SECRET", "label": "_NO_LABEL_"  },
+    { "key": "Feature:DataExplorer:EncryptionKey", "type": "kvref", "secretVar": "DATAEXPLORER_ENCRYPTION_KEY_SECRET", "label": "_NO_LABEL_" },
     { "key": "Feature:FuncLoc:ClientSecret",       "type": "kvref", "secretVar": "FUNCLOC_CLIENT_SECRET"              },
     { "key": "Feature:FuncLoc.OcpApimSubscriptionKey", "type": "kvref", "secretVar": "FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_SECRET" },
-    { "key": "Feature:Maintenance:RequestHeaders:Ocp-Apim-Subscription-Key", "type": "kvref", "secretVar": "MAINTENANCE_OCPAPIM_SUBSCRIPTION_KEY_SECRET" }
+    { "key": "Feature:Maintenance:RequestHeaders:Ocp-Apim-Subscription-Key", "type": "kvref", "secretVar": "MAINTENANCE_OCPAPIM_SUBSCRIPTION_KEY_SECRET", "label": "_NO_LABEL_" }
   ]
 }
