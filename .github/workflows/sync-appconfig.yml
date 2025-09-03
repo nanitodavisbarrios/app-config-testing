@@ -21,7 +21,7 @@ permissions:
 
 env:
   # Fallback BU if not set at Environment level (optional)
-  DEFAULT_BU: canada
+  DEFAULT_BU: CANADA
 
 jobs:
   # =========================================================================================
@@ -55,7 +55,7 @@ jobs:
             $txt = [regex]::Replace($txt,'(?s)/\*.*?\*/','')
             $txt = [regex]::Replace($txt,',\s*(\})','$1')
             $txt = [regex]::Replace($txt,',\s*(\])','$1')
-            return $txt | ConvertFrom-Json -Depth 200
+            return $txt | ConvertFrom-Json -Depth 100
           }
           function To-HT($o) {
             if ($null -eq $o) { return @{} }
@@ -106,7 +106,7 @@ jobs:
             switch($type){
               'json' {
                 $rendered = Resolve-Template $f.template $ctx
-                $jsonVal  = $rendered | ConvertTo-Json -Depth 200 -Compress
+                $jsonVal  = $rendered | ConvertTo-Json -Depth 100 -Compress
                 $ops += [pscustomobject]@{
                   type='json'; key=$key; label=$featureLabel; contentType='application/json'; value=$jsonVal
                 }
@@ -137,7 +137,7 @@ jobs:
             bu          = $env:BU
             defaultLabel= $defaultLabel
             ops         = $ops
-          } | ConvertTo-Json -Depth 300
+          } | ConvertTo-Json -Depth 100
 
           New-Item -ItemType Directory -Force -Path (Split-Path -Parent $env:OUT_PATH) | Out-Null
           Set-Content -LiteralPath $env:OUT_PATH -Value $manifest -Encoding utf8 -NoNewline
@@ -169,7 +169,7 @@ jobs:
           $defaultLabel=$ctx['TARGET_LABEL']; Get-ChildItem Env:|%{$k=$_.Name;$v=$_.Value;if($ctx.ContainsKey($k)-and($ctx[$k]-is[bool])){$ctx[$k]=($v -match '^(?i:true|1)$')}else{$ctx[$k]=$v}}
           $ops=@(); foreach($f in $features.features){$key=$f.key;$type=if($f.type){$f.type}else{'json'};$featureLabel=$defaultLabel;if($f|Get-Member -Name label -MemberType NoteProperty){$raw=$f.label;$featureLabel=($raw -is [string])?(Resolve-Template $raw $ctx):$raw}
             switch($type){
-              'json'   {$rendered=Resolve-Template $f.template $ctx;$jsonVal=$rendered|ConvertTo-Json -Depth 200 -Compress;$ops+=@{type='json';key=$key;label=$featureLabel;contentType='application/json';value=$jsonVal}}
+              'json'   {$rendered=Resolve-Template $f.template $ctx;$jsonVal=$rendered|ConvertTo-Json -Depth 100 -Compress;$ops+=@{type='json';key=$key;label=$featureLabel;contentType='application/json';value=$jsonVal}}
               'string' {$rendered=Resolve-Template $f.value $ctx;$str=($rendered -is [string])?$rendered:($rendered|ConvertTo-Json -Compress -Depth 8);$ops+=@{type='string';key=$key;label=$featureLabel;contentType='text/plain';value=$str}}
               'kvref'  {$varName=$f.secretVar;$val=$ctx[$varName]; if(-not $val){Write-Host ("Skip {0}: {1} not set" -f $key,$varName);continue}; $secretId=($val -like 'https://*')?$val:("https://{0}.vault.azure.net/secrets/{1}" -f $ctx['KEYVAULT_NAME'],$val); $ops+=@{type='kvref';key=$key;label=$featureLabel;secretId=$secretId}}
               default  {Write-Host ("Unknown type '{0}' for {1}; skipping." -f $type,$key)}
@@ -204,7 +204,7 @@ jobs:
           $defaultLabel=$ctx['TARGET_LABEL']; Get-ChildItem Env:|%{$k=$_.Name;$v=$_.Value;if($ctx.ContainsKey($k)-and($ctx[$k]-is[bool])){$ctx[$k]=($v -match '^(?i:true|1)$')}else{$ctx[$k]=$v}}
           $ops=@(); foreach($f in $features.features){$key=$f.key;$type=if($f.type){$f.type}else{'json'};$featureLabel=$defaultLabel;if($f|Get-Member -Name label -MemberType NoteProperty){$raw=$f.label;$featureLabel=($raw -is [string])?(Resolve-Template $raw $ctx):$raw}
             switch($type){
-              'json'   {$rendered=Resolve-Template $f.template $ctx;$jsonVal=$rendered|ConvertTo-Json -Depth 200 -Compress;$ops+=@{type='json';key=$key;label=$featureLabel;contentType='application/json';value=$jsonVal}}
+              'json'   {$rendered=Resolve-Template $f.template $ctx;$jsonVal=$rendered|ConvertTo-Json -Depth 100 -Compress;$ops+=@{type='json';key=$key;label=$featureLabel;contentType='application/json';value=$jsonVal}}
               'string' {$rendered=Resolve-Template $f.value $ctx;$str=($rendered -is [string])?$rendered:($rendered|ConvertTo-Json -Compress -Depth 8);$ops+=@{type='string';key=$key;label=$featureLabel;contentType='text/plain';value=$str}}
               'kvref'  {$varName=$f.secretVar;$val=$ctx[$varName]; if(-not $val){Write-Host ("Skip {0}: {1} not set" -f $key,$varName);continue}; $secretId=($val -like 'https://*')?$val:("https://{0}.vault.azure.net/secrets/{1}" -f $ctx['KEYVAULT_NAME'],$val); $ops+=@{type='kvref';key=$key;label=$featureLabel;secretId=$secretId}}
               default  {Write-Host ("Unknown type '{0}' for {1}; skipping." -f $type,$key)}
@@ -247,7 +247,7 @@ jobs:
           az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
           $file = Get-ChildItem -LiteralPath ./artifact -Filter *.json | Select-Object -First 1
           if (-not $file) { throw "No ops file found in artifact." }
-          $doc = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 200
+          $doc = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 100
           $acArgs = @('--connection-string', "${env:APPCONFIG_CONNECTION_STRING}")
 
           foreach($op in $doc.ops){
@@ -291,7 +291,7 @@ jobs:
           az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
           $file = Get-ChildItem -LiteralPath ./artifact -Filter *.json | Select-Object -First 1
           if (-not $file) { throw "No ops file found in artifact." }
-          $doc = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 200
+          $doc = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 100
           $acArgs = @('--connection-string', "${env:APPCONFIG_CONNECTION_STRING}")
           foreach($op in $doc.ops){
             $labelArgs = @(); if ($op.label -and $op.label -ne '_NO_LABEL_') { $labelArgs=@('--label', $op.label) }
@@ -322,7 +322,7 @@ jobs:
           az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
           $file = Get-ChildItem -LiteralPath ./artifact -Filter *.json | Select-Object -First 1
           if (-not $file) { throw "No ops file found in artifact." }
-          $doc = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 200
+          $doc = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 100
           $acArgs = @('--connection-string', "${env:APPCONFIG_CONNECTION_STRING}")
           foreach($op in $doc.ops){
             $labelArgs = @(); if ($op.label -and $op.label -ne '_NO_LABEL_') { $labelArgs=@('--label', $op.label) }
