@@ -22,6 +22,7 @@
     },
     {
       "key": "Feature:DataExplorer",
+      "label": "_NO_LABEL_",
       "type": "json",
       "template": {
         "ReadRole": "DDT_DataExplorer",
@@ -32,6 +33,7 @@
     },
     {
       "key": "Feature:DisabledCogs",
+      "label": "_NO_LABEL_",
       "type": "json",
       "template": {
         "CogNames": []
@@ -39,7 +41,6 @@
     },
     {
       "key": "Feature:FuncLoc",
-      "label": "_NO_LABEL_",
       "type": "json",
       "template": {
         "AADInstance": "https://login.microsoftonline.com/{0}/oauth2/v2.0/token",
@@ -58,6 +59,7 @@
     },
     {
       "key": "Feature:General",
+      "label": "_NO_LABEL_",
       "type": "json",
       "template": {
         "CompanyName": "COPCA",
@@ -70,6 +72,7 @@
     },
     {
       "key": "Feature:Maintenance",
+      "label": "_NO_LABEL_",
       "type": "json",
       "template": {
         "ReadRole": "DDT_Maintenance",
