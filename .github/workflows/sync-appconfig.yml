@@ -2,6 +2,40 @@ name: Sync Azure App Configuration (sequential build→deploy)
 
 on:
   workflow_dispatch:
+    inputs:
+      # Which BU folder under config/
+      businessUnit:
+        description: "Business Unit folder under config/"
+        required: true
+        default: "CANADA"
+
+      # Run / skip per stage (checkboxes)
+      runDev:
+        type: boolean
+        description: "Run DEV"
+        default: true
+      runTest:
+        type: boolean
+        description: "Run TST"
+        default: false
+      runProd:
+        type: boolean
+        description: "Run PRD"
+        default: false
+
+      # Select the GitHub Environment names at run time
+      devEnvName:
+        description: "DEV environment name (must exist in repo settings)"
+        required: true
+        default: "dev"
+      tstEnvName:
+        description: "TST environment name (must exist in repo settings)"
+        required: true
+        default: "CANADA-TST"
+      prdEnvName:
+        description: "PRD environment name (must exist in repo settings)"
+        required: true
+        default: "CANADA-PRD"
 
 permissions:
   contents: read
@@ -9,16 +43,17 @@ permissions:
 jobs:
   # ============================= DEV: BUILD =============================
   build_dev:
+    if: ${{ inputs.runDev }}
     name: Build DEV ops file
     runs-on: windows-latest
-    environment: ${{ vars.DEV_ENV || 'dev' }}
+    environment: ${{ inputs.devEnvName }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Build DEV
         shell: pwsh
         env:
-          BU: ${{ vars.BU || 'canada' }}
+          BU: ${{ inputs.businessUnit }}
         run: |
           $ErrorActionPreference='Stop'
           az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
@@ -32,9 +67,13 @@ jobs:
             $t = [regex]::Replace($t,',\s*(\])','$1')
             return $t | ConvertFrom-Json -Depth 100
           }
-          function To-HT($o){ if($null -eq $o){return @{}} elseif($o -is [pscustomobject]){$h=@{};$o.PSObject.Properties|%{$h[$_.Name]=To-HT $_.Value};return $h}
-            elseif($o -is [System.Collections.IDictionary]){$h=@{};foreach($k in $o.Keys){$h[$k]=To-HT $o[$k]};return $h}
-            elseif($o -is [System.Collections.IList]){$a=@();foreach($v in $o){$a+=,(To-HT $v)};return $a} else{return $o} }
+          function To-HT($o){
+            if($null -eq $o){return @{}}
+            elseif($o -is [pscustomobject]){ $h=@{}; $o.PSObject.Properties|%{$h[$_.Name]=To-HT $_.Value}; return $h }
+            elseif($o -is [System.Collections.IDictionary]){ $h=@{}; foreach($k in $o.Keys){$h[$k]=To-HT $o[$k]}; return $h }
+            elseif($o -is [System.Collections.IList]){ $a=@(); foreach($v in $o){$a+=,(To-HT $v)}; return $a }
+            else{ return $o }
+          }
           function Resolve-Template($n,$c){
             if ($n -is [string]) {
               $m=[regex]::Match($n,'^\$\{([A-Z0-9_]+)\}$'); if($m.Success){return $c[$m.Groups[1].Value]}
@@ -47,14 +86,17 @@ jobs:
             } else { return $n }
           }
 
-          # --------- paths (BU-scoped) ---------
+          # --------- BU-scoped paths ---------
           $repo = $env:GITHUB_WORKSPACE
           $bu   = $env:BU
-          $featuresPath = Join-Path $repo ("config/{0}/files/features.json" -f $bu)
-          $varsPath     = Join-Path $repo ("config/{0}/files/variables.dev.json" -f $bu)
-          $deployDir    = Join-Path $repo ("config/{0}/deployments" -f $bu)
-          New-Item -ItemType Directory -Force -Path $deployDir | Out-Null
-          $outPath      = Join-Path $deployDir ("features-dev.{0}.ops.json" -f $env:GITHUB_RUN_ID)
+          # structure file (singular)
+          $featuresPath = Join-Path $repo ("config/{0}/feature.json" -f $bu)
+          # variables file for DEV
+          $varsPath     = Join-Path $repo ("config/{0}/variables.dev.json" -f $bu)
+          # builds folder (new)
+          $buildDir     = Join-Path $repo ("config/{0}/builds" -f $bu)
+          New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+          $outPath      = Join-Path $buildDir ("features-dev.{0}.ops.json" -f $env:GITHUB_RUN_ID)
 
           # --------- render to ops manifest ---------
           $features = Read-Json $featuresPath
@@ -67,7 +109,7 @@ jobs:
             $key  = $f.key
             $type = if($f.type){$f.type}else{'json'}
 
-            # per-feature label override
+            # per-feature label override (optional)
             $featureLabel = $defaultLabel
             if ($f | Get-Member -Name label -MemberType NoteProperty) {
               $raw = $f.label
@@ -117,14 +159,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: features-dev
-          path: config/${{ vars.BU || 'canada' }}/deployments/features-dev.${{ github.run_id }}.ops.json
+          path: config/${{ inputs.businessUnit }}/builds/features-dev.${{ github.run_id }}.ops.json
 
   # ============================= DEV: DEPLOY =============================
   deploy_dev:
+    if: ${{ inputs.runDev }}
     name: Deploy DEV
     runs-on: windows-latest
     needs: build_dev
-    environment: ${{ vars.DEV_ENV || 'dev' }}
+    environment: ${{ inputs.devEnvName }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -153,25 +196,27 @@ jobs:
 
   # ============================= TST: BUILD =============================
   build_tst:
+    # sequential: wait for DEV deploy to succeed OR be skipped
+    if: ${{ inputs.runTest && (needs.deploy_dev.result == 'success' || needs.deploy_dev.result == 'skipped') }}
     name: Build TST ops file
     runs-on: windows-latest
-    needs: deploy_dev
-    environment: ${{ vars.TST_ENV || 'CANADA-TST' }}
+    needs: [deploy_dev]
+    environment: ${{ inputs.tstEnvName }}
     steps:
       - uses: actions/checkout@v4
       - name: Build TST
         shell: pwsh
         env:
-          BU: ${{ vars.BU || 'canada' }}
+          BU: ${{ inputs.businessUnit }}
         run: |
           $ErrorActionPreference='Stop'
           az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
           $repo=$env:GITHUB_WORKSPACE; $bu=$env:BU
-          $featuresPath = Join-Path $repo ("config/{0}/files/features.json" -f $bu)
-          $varsPath     = Join-Path $repo ("config/{0}/files/variables.test.json" -f $bu)
-          $deployDir    = Join-Path $repo ("config/{0}/deployments" -f $bu)
-          New-Item -ItemType Directory -Force -Path $deployDir | Out-Null
-          $outPath      = Join-Path $deployDir ("features-test.{0}.ops.json" -f $env:GITHUB_RUN_ID)
+          $featuresPath = Join-Path $repo ("config/{0}/feature.json" -f $bu)
+          $varsPath     = Join-Path $repo ("config/{0}/variables.test.json" -f $bu)
+          $buildDir     = Join-Path $repo ("config/{0}/builds" -f $bu)
+          New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+          $outPath      = Join-Path $buildDir ("features-test.{0}.ops.json" -f $env:GITHUB_RUN_ID)
 
           function Read-Json([string]$Path){ if(-not(Test-Path $Path)){throw "File not found: $Path"}; $t=Get-Content $Path -Raw -Encoding utf8; $t=[regex]::Replace($t,'(?m)^\s*//.*$','');$t=[regex]::Replace($t,'(?s)/\*.*?\*/','');$t=[regex]::Replace($t,',\s*(\})','$1');$t=[regex]::Replace($t,',\s*(\])','$1'); $t|ConvertFrom-Json -Depth 100 }
           function To-HT($o){ if($null -eq $o){return @{}} elseif($o -is [pscustomobject]){$h=@{};$o.PSObject.Properties|%{$h[$_.Name]=To-HT $_.Value};return $h}elseif($o -is [System.Collections.IDictionary]){$h=@{};foreach($k in $o.Keys){$h[$k]=To-HT $o[$k]};return $h}elseif($o -is [System.Collections.IList]){$a=@();foreach($v in $o){$a+=,(To-HT $v)};return $a}else{return $o}}
@@ -192,16 +237,18 @@ jobs:
           Write-Host "Built TEST ops -> $outPath"
 
       - uses: actions/upload-artifact@v4
+        if: ${{ inputs.runTest }}
         with:
           name: features-test
-          path: config/${{ vars.BU || 'canada' }}/deployments/features-test.${{ github.run_id }}.ops.json
+          path: config/${{ inputs.businessUnit }}/builds/features-test.${{ github.run_id }}.ops.json
 
   # ============================= TST: DEPLOY =============================
   deploy_tst:
+    if: ${{ inputs.runTest }}
     name: Deploy TST
     runs-on: windows-latest
-    needs: build_tst
-    environment: ${{ vars.TST_ENV || 'CANADA-TST' }}
+    needs: [build_tst]
+    environment: ${{ inputs.tstEnvName }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -229,25 +276,27 @@ jobs:
 
   # ============================= PRD: BUILD =============================
   build_prd:
+    # sequential: wait for TST deploy to succeed OR be skipped
+    if: ${{ inputs.runProd && (needs.deploy_tst.result == 'success' || needs.deploy_tst.result == 'skipped') }}
     name: Build PRD ops file
     runs-on: windows-latest
-    needs: deploy_tst
-    environment: ${{ vars.PRD_ENV || 'CANADA-PRD' }}
+    needs: [deploy_tst]
+    environment: ${{ inputs.prdEnvName }}
     steps:
       - uses: actions/checkout@v4
       - name: Build PRD
         shell: pwsh
         env:
-          BU: ${{ vars.BU || 'canada' }}
+          BU: ${{ inputs.businessUnit }}
         run: |
           $ErrorActionPreference='Stop'
           az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
           $repo=$env:GITHUB_WORKSPACE; $bu=$env:BU
-          $featuresPath = Join-Path $repo ("config/{0}/files/features.json" -f $bu)
-          $varsPath     = Join-Path $repo ("config/{0}/files/variables.prod.json" -f $bu)
-          $deployDir    = Join-Path $repo ("config/{0}/deployments" -f $bu)
-          New-Item -ItemType Directory -Force -Path $deployDir | Out-Null
-          $outPath      = Join-Path $deployDir ("features-prod.{0}.ops.json" -f $env:GITHUB_RUN_ID)
+          $featuresPath = Join-Path $repo ("config/{0}/feature.json" -f $bu)
+          $varsPath     = Join-Path $repo ("config/{0}/variables.prod.json" -f $bu)
+          $buildDir     = Join-Path $repo ("config/{0}/builds" -f $bu)
+          New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+          $outPath      = Join-Path $buildDir ("features-prod.{0}.ops.json" -f $env:GITHUB_RUN_ID)
 
           function Read-Json([string]$Path){ if(-not(Test-Path $Path)){throw "File not found: $Path"}; $t=Get-Content $Path -Raw -Encoding utf8; $t=[regex]::Replace($t,'(?m)^\s*//.*$','');$t=[regex]::Replace($t,'(?s)/\*.*?\*/','');$t=[regex]::Replace($t,',\s*(\})','$1');$t=[regex]::Replace($t,',\s*(\])','$1'); $t|ConvertFrom-Json -Depth 100 }
           function To-HT($o){ if($null -eq $o){return @{}} elseif($o -is [pscustomobject]){$h=@{};$o.PSObject.Properties|%{$h[$_.Name]=To-HT $_.Value};return $h}elseif($o -is [System.Collections.IDictionary]){$h=@{};foreach($k in $o.Keys){$h[$k]=To-HT $o[$k]};return $h}elseif($o -is [System.Collections.IList]){$a=@();foreach($v in $o){$a+=,(To-HT $v)};return $a}else{return $o}}
@@ -268,16 +317,18 @@ jobs:
           Write-Host "Built PRD ops -> $outPath"
 
       - uses: actions/upload-artifact@v4
+        if: ${{ inputs.runProd }}
         with:
           name: features-prod
-          path: config/${{ vars.BU || 'canada' }}/deployments/features-prod.${{ github.run_id }}.ops.json
+          path: config/${{ inputs.businessUnit }}/builds/features-prod.${{ github.run_id }}.ops.json
 
   # ============================= PRD: DEPLOY =============================
   deploy_prd:
+    if: ${{ inputs.runProd }}
     name: Deploy PRD
     runs-on: windows-latest
-    needs: build_prd
-    environment: ${{ vars.PRD_ENV || 'CANADA-PRD' }}
+    needs: [build_prd]
+    environment: ${{ inputs.prdEnvName }}
     steps:
       - uses: actions/download-artifact@v4
         with:
