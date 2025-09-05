@@ -1,4 +1,4 @@
-name: Sync Azure App Configuration (build → deploy per stage)
+name: Sync Azure App Configuration (sequential build→deploy)
 
 on:
   workflow_dispatch:
@@ -6,31 +6,23 @@ on:
 permissions:
   contents: read
 
-# Default/fallback names if repo vars aren't set
-env:
-  DEFAULT_DEV_ENV: dev
-  DEFAULT_TST_ENV: CANADA-TST
-  DEFAULT_PRD_ENV: CANADA-PRD
-  DEFAULT_BU: canada
-
 jobs:
-  # ============ DEV: BUILD ============
+  # ============================= DEV: BUILD =============================
   build_dev:
     name: Build DEV ops file
     runs-on: windows-latest
-    # run under DEV environment to let you scope variables (optional)
-    environment: ${{ vars.DEV_ENV && vars.DEV_ENV || env.DEFAULT_DEV_ENV }}
+    environment: ${{ vars.DEV_ENV || 'dev' }}
     steps:
       - uses: actions/checkout@v4
+
       - name: Build DEV
         shell: pwsh
         env:
-          BU: ${{ vars.BU && vars.BU || env.DEFAULT_BU }}
+          BU: ${{ vars.BU || 'canada' }}
         run: |
           $ErrorActionPreference='Stop'
           az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
 
-          # ---------- helpers ----------
           function Read-Json([string]$Path) {
             if (-not (Test-Path -LiteralPath $Path)) { throw "File not found: $Path" }
             $t = Get-Content -LiteralPath $Path -Raw -Encoding utf8
@@ -55,7 +47,7 @@ jobs:
             } else { return $n }
           }
 
-          # ---------- paths ----------
+          # --------- paths (BU-scoped) ---------
           $repo = $env:GITHUB_WORKSPACE
           $bu   = $env:BU
           $featuresPath = Join-Path $repo ("config/{0}/files/features.json" -f $bu)
@@ -64,13 +56,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path $deployDir | Out-Null
           $outPath      = Join-Path $deployDir ("features-dev.{0}.ops.json" -f $env:GITHUB_RUN_ID)
 
-          # ---------- load ----------
+          # --------- render to ops manifest ---------
           $features = Read-Json $featuresPath
           $varsObj  = Read-Json $varsPath
           $ctx      = To-HT $varsObj
           $defaultLabel = $ctx['TARGET_LABEL']
 
-          # ---------- render → ops ----------
           $ops = @()
           foreach($f in $features.features){
             $key  = $f.key
@@ -111,7 +102,6 @@ jobs:
             }
           }
 
-          # ---------- write manifest ----------
           $manifest = [pscustomobject]@{
             generatedAt = (Get-Date).ToUniversalTime().ToString('s')+'Z'
             environment = 'dev'
@@ -127,19 +117,20 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: features-dev
-          path: config/${{ vars.BU && vars.BU || env.DEFAULT_BU }}/deployments/features-dev.${{ github.run_id }}.ops.json
+          path: config/${{ vars.BU || 'canada' }}/deployments/features-dev.${{ github.run_id }}.ops.json
 
-  # ============ DEV: DEPLOY ============
+  # ============================= DEV: DEPLOY =============================
   deploy_dev:
     name: Deploy DEV
     runs-on: windows-latest
     needs: build_dev
-    environment: ${{ vars.DEV_ENV && vars.DEV_ENV || env.DEFAULT_DEV_ENV }}
+    environment: ${{ vars.DEV_ENV || 'dev' }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: features-dev
           path: ./artifact
+
       - name: Push to App Config (DEV)
         shell: pwsh
         env:
@@ -154,29 +145,28 @@ jobs:
           foreach($op in $doc.ops){
             $labelArgs = @(); if ($op.label -and $op.label -ne '_NO_LABEL_') { $labelArgs=@('--label',$op.label) }
             switch($op.type){
-              'json'   { $t=New-TemporaryFile; Set-Content -LiteralPath $t -Value $op.value -Encoding utf8 -NoNewline; az appconfig kv set @acArgs --key $op.key @labelArgs --value "@$t" --content-type $op.contentType --yes; Remove-Item $t -Force -ErrorAction SilentlyContinue }
-              'string' { $t=New-TemporaryFile; Set-Content -LiteralPath $t -Value $op.value -Encoding utf8 -NoNewline; az appconfig kv set @acArgs --key $op.key @labelArgs --value "@$t" --content-type $op.contentType --yes; Remove-Item $t -Force -ErrorAction SilentlyContinue }
-              'kvref'  { az appconfig kv set-keyvault @acArgs --key $op.key @labelArgs --secret-identifier $op.secretId --yes }
+              'json'   {$t=New-TemporaryFile; Set-Content -LiteralPath $t -Value $op.value -Encoding utf8 -NoNewline; az appconfig kv set @acArgs --key $op.key @labelArgs --value "@$t" --content-type $op.contentType --yes; Remove-Item $t -Force -ErrorAction SilentlyContinue}
+              'string' {$t=New-TemporaryFile; Set-Content -LiteralPath $t -Value $op.value -Encoding utf8 -NoNewline; az appconfig kv set @acArgs --key $op.key @labelArgs --value "@$t" --content-type $op.contentType --yes; Remove-Item $t -Force -ErrorAction SilentlyContinue}
+              'kvref'  {az appconfig kv set-keyvault @acArgs --key $op.key @labelArgs --secret-identifier $op.secretId --yes}
             }
           }
 
-  # ============ TEST: BUILD ============
+  # ============================= TST: BUILD =============================
   build_tst:
     name: Build TST ops file
     runs-on: windows-latest
     needs: deploy_dev
-    environment: ${{ vars.TST_ENV && vars.TST_ENV || env.DEFAULT_TST_ENV }}
+    environment: ${{ vars.TST_ENV || 'CANADA-TST' }}
     steps:
       - uses: actions/checkout@v4
       - name: Build TST
         shell: pwsh
         env:
-          BU: ${{ vars.BU && vars.BU || env.DEFAULT_BU }}
+          BU: ${{ vars.BU || 'canada' }}
         run: |
           $ErrorActionPreference='Stop'
           az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
-          # same script body as DEV build, but:
-          $repo = $env:GITHUB_WORKSPACE; $bu=$env:BU
+          $repo=$env:GITHUB_WORKSPACE; $bu=$env:BU
           $featuresPath = Join-Path $repo ("config/{0}/files/features.json" -f $bu)
           $varsPath     = Join-Path $repo ("config/{0}/files/variables.test.json" -f $bu)
           $deployDir    = Join-Path $repo ("config/{0}/deployments" -f $bu)
@@ -204,14 +194,14 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: features-test
-          path: config/${{ vars.BU && vars.BU || env.DEFAULT_BU }}/deployments/features-test.${{ github.run_id }}.ops.json
+          path: config/${{ vars.BU || 'canada' }}/deployments/features-test.${{ github.run_id }}.ops.json
 
-  # ============ TEST: DEPLOY (with approvals via environment) ============
+  # ============================= TST: DEPLOY =============================
   deploy_tst:
     name: Deploy TST
     runs-on: windows-latest
     needs: build_tst
-    environment: ${{ vars.TST_ENV && vars.TST_ENV || env.DEFAULT_TST_ENV }}
+    environment: ${{ vars.TST_ENV || 'CANADA-TST' }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -237,18 +227,18 @@ jobs:
             }
           }
 
-  # ============ PROD: BUILD ============
+  # ============================= PRD: BUILD =============================
   build_prd:
     name: Build PRD ops file
     runs-on: windows-latest
     needs: deploy_tst
-    environment: ${{ vars.PRD_ENV && vars.PRD_ENV || env.DEFAULT_PRD_ENV }}
+    environment: ${{ vars.PRD_ENV || 'CANADA-PRD' }}
     steps:
       - uses: actions/checkout@v4
       - name: Build PRD
         shell: pwsh
         env:
-          BU: ${{ vars.BU && vars.BU || env.DEFAULT_BU }}
+          BU: ${{ vars.BU || 'canada' }}
         run: |
           $ErrorActionPreference='Stop'
           az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
@@ -275,19 +265,19 @@ jobs:
           }
           $manifest=[pscustomobject]@{generatedAt=(Get-Date).ToUniversalTime().ToString('s')+'Z';environment='prod';bu=$bu;defaultLabel=$defaultLabel;ops=$ops}|ConvertTo-Json -Depth 100
           Set-Content -LiteralPath $outPath -Value $manifest -Encoding utf8 -NoNewline
-          Write-Host "Built PROD ops -> $outPath"
+          Write-Host "Built PRD ops -> $outPath"
 
       - uses: actions/upload-artifact@v4
         with:
           name: features-prod
-          path: config/${{ vars.BU && vars.BU || env.DEFAULT_BU }}/deployments/features-prod.${{ github.run_id }}.ops.json
+          path: config/${{ vars.BU || 'canada' }}/deployments/features-prod.${{ github.run_id }}.ops.json
 
-  # ============ PROD: DEPLOY (with approvals via environment) ============
+  # ============================= PRD: DEPLOY =============================
   deploy_prd:
     name: Deploy PRD
     runs-on: windows-latest
     needs: build_prd
-    environment: ${{ vars.PRD_ENV && vars.PRD_ENV || env.DEFAULT_PRD_ENV }}
+    environment: ${{ vars.PRD_ENV || 'CANADA-PRD' }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -307,7 +297,7 @@ jobs:
           foreach($op in $doc.ops){
             $labelArgs = @(); if ($op.label -and $op.label -ne '_NO_LABEL_') { $labelArgs=@('--label',$op.label) }
             switch($op.type){
-              'json'  {$t=New-TemporaryFile; Set-Content -LiteralPath $t -Value $op.value -Encoding utf8 -NoNewline; az appconfig kv set @acArgs --key $op.key @labelArgs --value "@$t" --content-type $op.contentType --yes; Remove-Item $t -Force -ErrorAction SilentlyContinue}
+              'json'   {$t=New-TemporaryFile; Set-Content -LiteralPath $t -Value $op.value -Encoding utf8 -NoNewline; az appconfig kv set @acArgs --key $op.key @labelArgs --value "@$t" --content-type $op.contentType --yes; Remove-Item $t -Force -ErrorAction SilentlyContinue}
               'string' {$t=New-TemporaryFile; Set-Content -LiteralPath $t -Value $op.value -Encoding utf8 -NoNewline; az appconfig kv set @acArgs --key $op.key @labelArgs --value "@$t" --content-type $op.contentType --yes; Remove-Item $t -Force -ErrorAction SilentlyContinue}
               'kvref'  {az appconfig kv set-keyvault @acArgs --key $op.key @labelArgs --secret-identifier $op.secretId --yes}
             }
