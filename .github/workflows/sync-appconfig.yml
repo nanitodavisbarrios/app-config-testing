@@ -90,7 +90,7 @@ jobs:
           $repo = $env:GITHUB_WORKSPACE
           $bu   = $env:BU
           # structure file (singular)
-          $featuresPath = Join-Path $repo ("config/{0}/feature.json" -f $bu)
+          $featuresPath = Join-Path $repo ("config/{0}/features.json" -f $bu)
           # variables file for DEV
           $varsPath     = Join-Path $repo ("config/{0}/variables.dev.json" -f $bu)
           # builds folder (new)
@@ -212,7 +212,7 @@ jobs:
           $ErrorActionPreference='Stop'
           az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
           $repo=$env:GITHUB_WORKSPACE; $bu=$env:BU
-          $featuresPath = Join-Path $repo ("config/{0}/feature.json" -f $bu)
+          $featuresPath = Join-Path $repo ("config/{0}/features.json" -f $bu)
           $varsPath     = Join-Path $repo ("config/{0}/variables.test.json" -f $bu)
           $buildDir     = Join-Path $repo ("config/{0}/builds" -f $bu)
           New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
@@ -292,7 +292,7 @@ jobs:
           $ErrorActionPreference='Stop'
           az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
           $repo=$env:GITHUB_WORKSPACE; $bu=$env:BU
-          $featuresPath = Join-Path $repo ("config/{0}/feature.json" -f $bu)
+          $featuresPath = Join-Path $repo ("config/{0}/features.json" -f $bu)
           $varsPath     = Join-Path $repo ("config/{0}/variables.prod.json" -f $bu)
           $buildDir     = Join-Path $repo ("config/{0}/builds" -f $bu)
           New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
