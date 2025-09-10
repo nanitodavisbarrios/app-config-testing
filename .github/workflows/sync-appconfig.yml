@@ -152,8 +152,8 @@ jobs:
 
           # Build only the environments selected at dispatch time
           if ($env:RUN_DEV  -eq 'true') { Build-One -EnvName 'dev'  -VarsFile 'variables.dev.json'  -OutSuffix 'dev'  }
-          if ($env:RUN_TEST -eq 'true') { Build-One -EnvName 'test' -VarsFile 'variables.test.json' -OutSuffix 'test' }
-          if ($env:RUN_PROD -eq 'true') { Build-One -EnvName 'prod' -VarsFile 'variables.prod.json' -OutSuffix 'prod' }
+          if ($env:RUN_TEST -eq 'true') { Build-One -EnvName 'test' -VarsFile 'variables.tst.json' -OutSuffix 'test' }
+          if ($env:RUN_PROD -eq 'true') { Build-One -EnvName 'prod' -VarsFile 'variables.prd.json' -OutSuffix 'prod' }
 
       # Upload artifacts for the selected environments
       - name: Upload DEV artifact
