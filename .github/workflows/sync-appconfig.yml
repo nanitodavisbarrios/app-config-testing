@@ -1,69 +1,63 @@
-name: Sync Azure App Configuration
+name: Sync Azure App Configuration (single env via inputs)
 
 on:
   workflow_dispatch:
     inputs:
       businessUnit:
-        description: "Business Unit folder under config/"
+        description: "BU folder under config/ (e.g. CANADA)"
         required: true
         default: "CANADA"
-
-      runDev:
-        type: boolean
-        description: "Run DEV"
-        default: true
-      runTest:
-        type: boolean
-        description: "Run TST"
-        default: false
-      runProd:
-        type: boolean
-        description: "Run PRD"
-        default: false
-
-      devEnvName:
-        description: "DEV environment name (must exist in repo settings)"
+      targetEnv:
+        description: "Target environment"
+        type: choice
         required: true
-        default: "dev"
-      tstEnvName:
-        description: "TST environment name (must exist in repo settings)"
+        options: [dev, tst, prd]
+        default: dev
+      appConfigConnectionString:
+        description: "Azure App Configuration connection string"
         required: true
-        default: "CANADA-DEV"
-      prdEnvName:
-        description: "PRD environment name (must exist in repo settings)"
+        default: ""   # NOTE: inputs are visible to run viewers; prefer secrets if possible.
+      featuresFile:
+        description: "Features file name in BU folder"
         required: true
-        default: "APLNG-DEV"
+        default: "features.json"
+      # Optional override: if left blank, we’ll use variables.<env>.json automatically
+      variablesFile:
+        description: "Variables file name in BU folder (optional)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 jobs:
-  # ============================= BUILD ALL SELECTED ENVS =============================
-  build_all:
-    name: Build ops files (DEV/TST/PRD)
+  build_and_deploy:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Build manifests
+      - name: Build manifest and deploy to App Config
         shell: pwsh
         env:
-          BU: ${{ inputs.businessUnit }}
-          RUN_DEV:  ${{ inputs.runDev }}
-          RUN_TEST: ${{ inputs.runTest }}
-          RUN_PROD: ${{ inputs.runProd }}
+          BU:             ${{ inputs.businessUnit }}
+          TARGET_ENV:     ${{ inputs.targetEnv }}
+          FEATURES_FILE:  ${{ inputs.featuresFile }}
+          VARS_FILE_IN:   ${{ inputs.variablesFile }}
+          APPCONFIG_CS:   ${{ inputs.appConfigConnectionString }}
         run: |
+          # ---------- Safety & az CLI ----------
           $ErrorActionPreference='Stop'
           az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
 
-          # ---------- helpers ----------
+          # ---------- Helpers ----------
           function Read-Json([string]$Path) {
             if (-not (Test-Path -LiteralPath $Path)) { throw "File not found: $Path" }
             $t = Get-Content -LiteralPath $Path -Raw -Encoding utf8
-            $t = [regex]::Replace($t,'(?m)^\s*//.*$','')
-            $t = [regex]::Replace($t,'(?s)/\*.*?\*/','')
-            $t = [regex]::Replace($t,',\s*(\})','$1')
-            $t = [regex]::Replace($t,',\s*(\])','$1')
+            $t = [regex]::Replace($t,'(?m)^\s*//.*$','')  # // comments
+            $t = [regex]::Replace($t,'(?s)/\*.*?\*/','')  # /* */ comments
+            $t = [regex]::Replace($t,',\s*(\})','$1')     # trailing commas }
+            $t = [regex]::Replace($t,',\s*(\])','$1')     # trailing commas ]
             return $t | ConvertFrom-Json -Depth 100
           }
           function To-HT($o){
@@ -85,190 +79,111 @@ jobs:
             } else { return $n }
           }
 
-          function Build-One([string]$EnvName,[string]$VarsFile,[string]$OutSuffix) {
-            $repo = $env:GITHUB_WORKSPACE
-            $bu   = $env:BU
-            $featuresPath = Join-Path $repo ("config/{0}/features.json" -f $bu)
-            $varsPath     = Join-Path $repo ("config/{0}/{1}" -f $bu,$VarsFile)
-            $buildDir     = Join-Path $repo ("config/{0}/builds" -f $bu)
-            New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
-            $outPath      = Join-Path $buildDir ("features-{0}.{1}.ops.json" -f $OutSuffix,$env:GITHUB_RUN_ID)
+          # ---------- Inputs & paths ----------
+          $repo = $env:GITHUB_WORKSPACE
+          $bu   = $env:BU
+          $envName = $env:TARGET_ENV  # dev|tst|prd
 
-            $features = Read-Json $featuresPath
-            $varsObj  = Read-Json $varsPath
-            $ctx      = To-HT $varsObj
-            $defaultLabel = $ctx['TARGET_LABEL']
+          # Pick variables file: explicit override or the conventional variables.<env>.json
+          if ([string]::IsNullOrWhiteSpace($env:VARS_FILE_IN)) {
+            $map = @{ dev='variables.dev.json'; tst='variables.tst.json'; prd='variables.prd.json' }
+            $varsFile = $map[$envName]
+          } else {
+            $varsFile = $env:VARS_FILE_IN
+          }
 
-            $ops = @()
-            foreach($f in $features.features){
-              $key  = $f.key
-              $type = if($f.type){$f.type}else{'json'}
+          $featuresPath = Join-Path $repo ("config/{0}/{1}" -f $bu, $env:FEATURES_FILE)
+          $varsPath     = Join-Path $repo ("config/{0}/{1}" -f $bu, $varsFile)
+          $buildDir     = Join-Path $repo ("config/{0}/builds" -f $bu)
+          New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
 
-              $featureLabel = $defaultLabel
-              if ($f | Get-Member -Name label -MemberType NoteProperty) {
-                $raw = $f.label
-                $featureLabel = ($raw -is [string]) ? (Resolve-Template $raw $ctx) : $raw
-              }
+          $suffix = switch ($envName) { 'dev' {'dev'} 'tst' {'test'} 'prd' {'prod'} default {$envName} }
+          $outPath = Join-Path $buildDir ("features-{0}.{1}.ops.json" -f $suffix,$env:GITHUB_RUN_ID)
 
-              switch ($type) {
-                'json' {
-                  $rendered = Resolve-Template $f.template $ctx
-                  $jsonVal  = $rendered | ConvertTo-Json -Depth 100 -Compress
-                  $ops += [pscustomobject]@{
-                    type='json'; key=$key; label=$featureLabel; contentType='application/json'; value=$jsonVal
-                  }
-                }
-                'string' {
-                  $rendered = Resolve-Template $f.value $ctx
-                  $str = ($rendered -is [string]) ? $rendered : ($rendered | ConvertTo-Json -Depth 8 -Compress)
-                  $ops += [pscustomobject]@{
-                    type='string'; key=$key; label=$featureLabel; contentType='text/plain'; value=$str
-                  }
-                }
-                'kvref' {
-                  $varName = $f.secretVar
-                  $val     = $ctx[$varName]
-                  if (-not $val) { Write-Host ("Skip {0}: {1} not set" -f $key,$varName); continue }
-                  $kvName  = $ctx['KEYVAULT_NAME']
-                  $secretId = ($val -like 'https://*') ? $val : ("https://{0}.vault.azure.net/secrets/{1}" -f $kvName,$val)
-                  $ops += [pscustomobject]@{
-                    type='kvref'; key=$key; label=$featureLabel; secretId=$secretId
-                  }
+          # ---------- Load + render ----------
+          $features = Read-Json $featuresPath
+          $varsObj  = Read-Json $varsPath
+          $ctx      = To-HT $varsObj
+
+          $ops = @()
+          foreach($f in $features.features){
+            $key  = $f.key
+            $type = if($f.type){$f.type}else{'json'}
+
+            # label comes ONLY from features.json now (no default env label)
+            $featureLabel = $null
+            if ($f | Get-Member -Name label -MemberType NoteProperty) {
+              $raw = $f.label
+              $featureLabel = ($raw -is [string]) ? (Resolve-Template $raw $ctx) : $raw
+              if ([string]::IsNullOrWhiteSpace($featureLabel) -or $featureLabel -eq '_NO_LABEL_') { $featureLabel = $null }
+            }
+
+            switch ($type) {
+              'json' {
+                $rendered = Resolve-Template $f.template $ctx
+                $jsonVal  = $rendered | ConvertTo-Json -Depth 100 -Compress
+                $ops += [pscustomobject]@{
+                  type='json'; key=$key; label=$featureLabel; contentType='application/json'; value=$jsonVal
                 }
               }
+              'string' {
+                $rendered = Resolve-Template $f.value $ctx
+                $str = ($rendered -is [string]) ? $rendered : ($rendered | ConvertTo-Json -Depth 8 -Compress)
+                $ops += [pscustomobject]@{
+                  type='string'; key=$key; label=$featureLabel; contentType='text/plain'; value=$str
+                }
+              }
+              'kvref' {
+                $varName = $f.secretVar
+                $val     = $ctx[$varName]
+                if (-not $val) { Write-Host ("Skip {0}: {1} not set" -f $key,$varName); continue }
+                $kvName  = $ctx['KEYVAULT_NAME']
+                $secretId = ($val -like 'https://*') ? $val : ("https://{0}.vault.azure.net/secrets/{1}" -f $kvName,$val)
+                $ops += [pscustomobject]@{
+                  type='kvref'; key=$key; label=$featureLabel; secretId=$secretId
+                }
+              }
             }
-
-            $manifest = [pscustomobject]@{
-              generatedAt = (Get-Date).ToUniversalTime().ToString('s')+'Z'
-              environment = $EnvName
-              bu          = $bu
-              defaultLabel= $defaultLabel
-              ops         = $ops
-            } | ConvertTo-Json -Depth 100
-
-            Set-Content -LiteralPath $outPath -Value $manifest -Encoding utf8 -NoNewline
-            Write-Host ("Built {0} ops -> {1}" -f $EnvName.ToUpper(), $outPath)
           }
 
-          # Build only the environments selected at dispatch time
-          if ($env:RUN_DEV  -eq 'true') { Build-One -EnvName 'dev'  -VarsFile 'variables.dev.json'  -OutSuffix 'dev'  }
-          if ($env:RUN_TEST -eq 'true') { Build-One -EnvName 'test' -VarsFile 'variables.tst.json' -OutSuffix 'test' }
-          if ($env:RUN_PROD -eq 'true') { Build-One -EnvName 'prod' -VarsFile 'variables.prd.json' -OutSuffix 'prod' }
+          # ---------- Persist manifest ----------
+          $manifest = [pscustomobject]@{
+            generatedAt = (Get-Date).ToUniversalTime().ToString('s')+'Z'
+            environment = $envName
+            bu          = $bu
+            ops         = $ops
+          } | ConvertTo-Json -Depth 100
+          Set-Content -LiteralPath $outPath -Value $manifest -Encoding utf8 -NoNewline
+          Write-Host "Built $envName ops -> $outPath"
 
-      # Upload artifacts for the selected environments
-      - name: Upload DEV artifact
-        if: ${{ inputs.runDev }}
+          # ---------- Deploy ----------
+          if ([string]::IsNullOrWhiteSpace($env:APPCONFIG_CS)) { throw "AppConfig connection string input is empty." }
+          $acArgs = @('--connection-string', $env:APPCONFIG_CS)
+
+          $doc = Get-Content -LiteralPath $outPath -Raw | ConvertFrom-Json -Depth 100
+          foreach($op in $doc.ops){
+            $labelArgs = @(); if ($op.label) { $labelArgs = @('--label', $op.label) }
+            switch($op.type){
+              'json' {
+                $t=New-TemporaryFile
+                Set-Content -LiteralPath $t -Value $op.value -Encoding utf8 -NoNewline
+                az appconfig kv set @acArgs --key $op.key @labelArgs --value "@$t" --content-type $op.contentType --yes
+                Remove-Item $t -Force -ErrorAction SilentlyContinue
+              }
+              'string' {
+                $t=New-TemporaryFile
+                Set-Content -LiteralPath $t -Value $op.value -Encoding utf8 -NoNewline
+                az appconfig kv set @acArgs --key $op.key @labelArgs --value "@$t" --content-type $op.contentType --yes
+                Remove-Item $t -Force -ErrorAction SilentlyContinue
+              }
+              'kvref' {
+                az appconfig kv set-keyvault @acArgs --key $op.key @labelArgs --secret-identifier $op.secretId --yes
+              }
+            }
+          }
+
+      - name: Upload manifest (artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: features-dev
-          path: config/${{ inputs.businessUnit }}/builds/features-dev.${{ github.run_id }}.ops.json
-
-      - name: Upload TST artifact
-        if: ${{ inputs.runTest }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: features-test
-          path: config/${{ inputs.businessUnit }}/builds/features-test.${{ github.run_id }}.ops.json
-
-      - name: Upload PRD artifact
-        if: ${{ inputs.runProd }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: features-prod
-          path: config/${{ inputs.businessUnit }}/builds/features-prod.${{ github.run_id }}.ops.json
-
-  # ============================= DEV: DEPLOY =============================
-  deploy_dev:
-    if: ${{ inputs.runDev }}
-    name: Deploy DEV
-    runs-on: windows-latest
-    needs: [build_all]
-    environment: ${{ inputs.devEnvName }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: features-dev
-          path: ./artifact
-      - name: Push to App Config (DEV)
-        shell: pwsh
-        env:
-          APPCONFIG_CONNECTION_STRING: ${{ secrets.APPCONFIG_CONNECTION_STRING }}
-        run: |
-          $ErrorActionPreference='Stop'
-          az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
-          $file = Get-ChildItem -Path ./artifact -Filter *.json | Select-Object -First 1
-          if (-not $file) { throw "No ops file in artifact." }
-          $doc = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 100
-          $acArgs = @('--connection-string', "${env:APPCONFIG_CONNECTION_STRING}")
-          foreach($op in $doc.ops){
-            $labelArgs = @(); if ($op.label -and $op.label -ne '_NO_LABEL_') { $labelArgs=@('--label',$op.label) }
-            switch($op.type){
-              'json'   {$t=New-TemporaryFile; Set-Content -LiteralPath $t -Value $op.value -Encoding utf8 -NoNewline; az appconfig kv set @acArgs --key $op.key @labelArgs --value "@$t" --content-type $op.contentType --yes; Remove-Item $t -Force -ErrorAction SilentlyContinue}
-              'string' {$t=New-TemporaryFile; Set-Content -LiteralPath $t -Value $op.value -Encoding utf8 -NoNewline; az appconfig kv set @acArgs --key $op.key @labelArgs --value "@$t" --content-type $op.contentType --yes; Remove-Item $t -Force -ErrorAction SilentlyContinue}
-              'kvref'  {az appconfig kv set-keyvault @acArgs --key $op.key @labelArgs --secret-identifier $op.secretId --yes}
-            }
-          }
-
-  # ============================= TST: DEPLOY =============================
-  deploy_tst:
-    if: ${{ inputs.runTest }}
-    name: Deploy TST
-    runs-on: windows-latest
-    needs: [deploy_dev]
-    environment: ${{ inputs.tstEnvName }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: features-test
-          path: ./artifact
-      - name: Push to App Config (TST)
-        shell: pwsh
-        env:
-          APPCONFIG_CONNECTION_STRING: ${{ secrets.APPCONFIG_CONNECTION_STRING }}
-        run: |
-          $ErrorActionPreference='Stop'
-          az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
-          $file = Get-ChildItem -Path ./artifact -Filter *.json | Select-Object -First 1
-          if (-not $file) { throw "No ops file in artifact." }
-          $doc = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 100
-          $acArgs = @('--connection-string', "${env:APPCONFIG_CONNECTION_STRING}")
-          foreach($op in $doc.ops){
-            $labelArgs = @(); if ($op.label -and $op.label -ne '_NO_LABEL_') { $labelArgs=@('--label',$op.label) }
-            switch($op.type){
-              'json'   {$t=New-TemporaryFile; Set-Content -LiteralPath $t -Value $op.value -Encoding utf8 -NoNewline; az appconfig kv set @acArgs --key $op.key @labelArgs --value "@$t" --content-type $op.contentType --yes; Remove-Item $t -Force -ErrorAction SilentlyContinue}
-              'string' {$t=New-TemporaryFile; Set-Content -LiteralPath $t -Value $op.value -Encoding utf8 -NoNewline; az appconfig kv set @acArgs --key $op.key @labelArgs --value "@$t" --content-type $op.contentType --yes; Remove-Item $t -Force -ErrorAction SilentlyContinue}
-              'kvref'  {az appconfig kv set-keyvault @acArgs --key $op.key @labelArgs --secret-identifier $op.secretId --yes}
-            }
-          }
-
-  # ============================= PRD: DEPLOY =============================
-  deploy_prd:
-    if: ${{ inputs.runProd }}
-    name: Deploy PRD
-    runs-on: windows-latest
-    needs: [deploy_tst]
-    environment: ${{ inputs.prdEnvName }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: features-prod
-          path: ./artifact
-      - name: Push to App Config (PRD)
-        shell: pwsh
-        env:
-          APPCONFIG_CONNECTION_STRING: ${{ secrets.APPCONFIG_CONNECTION_STRING }}
-        run: |
-          $ErrorActionPreference='Stop'
-          az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
-          $file = Get-ChildItem -Path ./artifact -Filter *.json | Select-Object -First 1
-          if (-not $file) { throw "No ops file in artifact." }
-          $doc = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 100
-          $acArgs = @('--connection-string', "${env:APPCONFIG_CONNECTION_STRING}")
-          foreach($op in $doc.ops){
-            $labelArgs = @(); if ($op.label -and $op.label -ne '_NO_LABEL_') { $labelArgs=@('--label',$op.label) }
-            switch($op.type){
-              'json'   {$t=New-TemporaryFile; Set-Content -LiteralPath $t -Value $op.value -Encoding utf8 -NoNewline; az appconfig kv set @acArgs --key $op.key @labelArgs --value "@$t" --content-type $op.contentType --yes; Remove-Item $t -Force -ErrorAction SilentlyContinue}
-              'string' {$t=New-TemporaryFile; Set-Content -LiteralPath $t -Value $op.value -Encoding utf8 -NoNewline; az appconfig kv set @acArgs --key $op.key @labelArgs --value "@$t" --content-type $op.contentType --yes; Remove-Item $t -Force -ErrorAction SilentlyContinue}
-              'kvref'  {az appconfig kv set-keyvault @acArgs --key $op.key @labelArgs --secret-identifier $op.secretId --yes}
-            }
-          }
+          name: features-${{ inputs.targetEnv }}
+          path: config/${{ inputs.businessUnit }}/builds/features-${{ inputs.targetEnv == 'tst' && 'test' || (inputs.targetEnv == 'prd' && 'prod' || inputs.targetEnv) }}.${{ github.run_id }}.ops.json
