@@ -2,6 +2,7 @@
   "features": [
     {
       "key": "Feature:AutoUpdate",
+      "label": "Indexer",
       "type": "json",
       "template": {
         "ScriptFileName": "VEStudioC.schedule",
@@ -12,7 +13,6 @@
     },
     {
       "key": "Feature:Azure",
-      "label": "_NO_LABEL_",
       "type": "json",
       "template": {
         "UseIntegratedWindowsAuth": "true",
@@ -22,7 +22,6 @@
     },
     {
       "key": "Feature:DataExplorer",
-      "label": "_NO_LABEL_",
       "type": "json",
       "template": {
         "ReadRole": "DDT_DataExplorer",
@@ -33,7 +32,6 @@
     },
     {
       "key": "Feature:DisabledCogs",
-      "label": "_NO_LABEL_",
       "type": "json",
       "template": {
         "CogNames": []
@@ -41,6 +39,7 @@
     },
     {
       "key": "Feature:FuncLoc",
+      "label": "Indexer",
       "type": "json",
       "template": {
         "AADInstance": "https://login.microsoftonline.com/{0}/oauth2/v2.0/token",
@@ -59,7 +58,6 @@
     },
     {
       "key": "Feature:General",
-      "label": "_NO_LABEL_",
       "type": "json",
       "template": {
         "CompanyName": "COPCA",
@@ -72,7 +70,6 @@
     },
     {
       "key": "Feature:Maintenance",
-      "label": "_NO_LABEL_",
       "type": "json",
       "template": {
         "ReadRole": "DDT_Maintenance",
@@ -198,10 +195,10 @@
         "enable": "false"
       }
     },
-    { "key": "Feature:DataExplorer:EncryptionIV",  "type": "kvref", "secretVar": "DATAEXPLORER_ENCRYPTION_IV_SECRET", "label": "_NO_LABEL_"  },
-    { "key": "Feature:DataExplorer:EncryptionKey", "type": "kvref", "secretVar": "DATAEXPLORER_ENCRYPTION_KEY_SECRET", "label": "_NO_LABEL_" },
-    { "key": "Feature:FuncLoc:ClientSecret",       "type": "kvref", "secretVar": "FUNCLOC_CLIENT_SECRET"              },
-    { "key": "Feature:FuncLoc.OcpApimSubscriptionKey", "type": "kvref", "secretVar": "FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_SECRET" },
-    { "key": "Feature:Maintenance:RequestHeaders:Ocp-Apim-Subscription-Key", "type": "kvref", "secretVar": "MAINTENANCE_OCPAPIM_SUBSCRIPTION_KEY_SECRET", "label": "_NO_LABEL_" }
+    { "key": "Feature:DataExplorer:EncryptionIV",  "type": "kvref", "secretVar": "DATAEXPLORER_ENCRYPTION_IV_SECRET" },
+    { "key": "Feature:DataExplorer:EncryptionKey", "type": "kvref", "secretVar": "DATAEXPLORER_ENCRYPTION_KEY_SECRET" },
+    { "key": "Feature:FuncLoc:ClientSecret",       "type": "kvref", "secretVar": "FUNCLOC_CLIENT_SECRET", "label": "Indexer"},
+    { "key": "Feature:FuncLoc.OcpApimSubscriptionKey", "type": "kvref", "secretVar": "FUNCLOC_OCPAPIM_SUBSCRIPTION_KEY_SECRET", "label": "Indexer" },
+    { "key": "Feature:Maintenance:RequestHeaders:Ocp-Apim-Subscription-Key", "type": "kvref", "secretVar": "MAINTENANCE_OCPAPIM_SUBSCRIPTION_KEY_SECRET" }
   ]
 }

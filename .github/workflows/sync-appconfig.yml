@@ -1,4 +1,4 @@
-name: Sync Azure App Configuration (single env via inputs)
+name: Sync Azure App Configuration (build → deploy, single env)
 
 on:
   workflow_dispatch:
@@ -10,20 +10,19 @@ on:
       targetEnv:
         description: "Target environment"
         type: choice
-        required: true
         options: [dev, tst, prd]
+        required: true
         default: dev
       appConfigConnectionString:
         description: "Azure App Configuration connection string"
         required: true
-        default: ""   # NOTE: inputs are visible to run viewers; prefer secrets if possible.
+        default: ""  # NOTE: Inputs are visible to run viewers. Use secrets if needed.
       featuresFile:
-        description: "Features file name in BU folder"
+        description: "Features JSON (under config/<BU>/)"
         required: true
         default: "features.json"
-      # Optional override: if left blank, we’ll use variables.<env>.json automatically
       variablesFile:
-        description: "Variables file name in BU folder (optional)"
+        description: "Variables JSON (under config/<BU>/). Leave blank to use variables.<env>.json"
         required: false
         default: ""
 
@@ -31,26 +30,26 @@ permissions:
   contents: read
 
 jobs:
-  build_and_deploy:
+  # ============================= BUILD =============================
+  build:
+    name: Build manifest
     runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build manifest and deploy to App Config
+      - name: Build ops (render features → manifest)
         shell: pwsh
         env:
-          BU:             ${{ inputs.businessUnit }}
-          TARGET_ENV:     ${{ inputs.targetEnv }}
-          FEATURES_FILE:  ${{ inputs.featuresFile }}
-          VARS_FILE_IN:   ${{ inputs.variablesFile }}
-          APPCONFIG_CS:   ${{ inputs.appConfigConnectionString }}
+          BU:            ${{ inputs.businessUnit }}
+          TARGET_ENV:    ${{ inputs.targetEnv }}
+          FEATURES_FILE: ${{ inputs.featuresFile }}
+          VARS_FILE_IN:  ${{ inputs.variablesFile }}
         run: |
-          # ---------- Safety & az CLI ----------
           $ErrorActionPreference='Stop'
           az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
 
-          # ---------- Helpers ----------
+          # --- helpers (comment-tolerant JSON, normalize to HT, recursive templating) ---
           function Read-Json([string]$Path) {
             if (-not (Test-Path -LiteralPath $Path)) { throw "File not found: $Path" }
             $t = Get-Content -LiteralPath $Path -Raw -Encoding utf8
@@ -79,12 +78,11 @@ jobs:
             } else { return $n }
           }
 
-          # ---------- Inputs & paths ----------
+          # --- inputs & paths ---
           $repo = $env:GITHUB_WORKSPACE
           $bu   = $env:BU
           $envName = $env:TARGET_ENV  # dev|tst|prd
 
-          # Pick variables file: explicit override or the conventional variables.<env>.json
           if ([string]::IsNullOrWhiteSpace($env:VARS_FILE_IN)) {
             $map = @{ dev='variables.dev.json'; tst='variables.tst.json'; prd='variables.prd.json' }
             $varsFile = $map[$envName]
@@ -100,7 +98,7 @@ jobs:
           $suffix = switch ($envName) { 'dev' {'dev'} 'tst' {'test'} 'prd' {'prod'} default {$envName} }
           $outPath = Join-Path $buildDir ("features-{0}.{1}.ops.json" -f $suffix,$env:GITHUB_RUN_ID)
 
-          # ---------- Load + render ----------
+          # --- load & render ---
           $features = Read-Json $featuresPath
           $varsObj  = Read-Json $varsPath
           $ctx      = To-HT $varsObj
@@ -110,7 +108,7 @@ jobs:
             $key  = $f.key
             $type = if($f.type){$f.type}else{'json'}
 
-            # label comes ONLY from features.json now (no default env label)
+            # Label ONLY from features.json (missing/empty/_NO_LABEL_ => no label)
             $featureLabel = $null
             if ($f | Get-Member -Name label -MemberType NoteProperty) {
               $raw = $f.label
@@ -146,21 +144,49 @@ jobs:
             }
           }
 
-          # ---------- Persist manifest ----------
           $manifest = [pscustomobject]@{
             generatedAt = (Get-Date).ToUniversalTime().ToString('s')+'Z'
             environment = $envName
             bu          = $bu
             ops         = $ops
           } | ConvertTo-Json -Depth 100
+
           Set-Content -LiteralPath $outPath -Value $manifest -Encoding utf8 -NoNewline
           Write-Host "Built $envName ops -> $outPath"
 
-          # ---------- Deploy ----------
+      - name: Upload manifest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: features-${{ inputs.targetEnv }}
+          path: config/${{ inputs.businessUnit }}/builds/features-${{ inputs.targetEnv == 'tst' && 'test' || (inputs.targetEnv == 'prd' && 'prod' || inputs.targetEnv) }}.${{ github.run_id }}.ops.json
+
+  # ============================= DEPLOY =============================
+  deploy:
+    name: Deploy manifest to App Config
+    runs-on: windows-latest
+    needs: [build]
+    steps:
+      - name: Download manifest artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: features-${{ inputs.targetEnv }}
+          path: ./artifact
+
+      - name: Deploy to Azure App Configuration
+        shell: pwsh
+        env:
+          APPCONFIG_CS: ${{ inputs.appConfigConnectionString }}
+        run: |
+          $ErrorActionPreference='Stop'
+          az config set extension.use_dynamic_install=yes_without_prompt | Out-Null
+
+          $file = Get-ChildItem -Path ./artifact -Filter *.json | Select-Object -First 1
+          if (-not $file) { throw "No ops file in artifact." }
+
           if ([string]::IsNullOrWhiteSpace($env:APPCONFIG_CS)) { throw "AppConfig connection string input is empty." }
           $acArgs = @('--connection-string', $env:APPCONFIG_CS)
 
-          $doc = Get-Content -LiteralPath $outPath -Raw | ConvertFrom-Json -Depth 100
+          $doc = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 100
           foreach($op in $doc.ops){
             $labelArgs = @(); if ($op.label) { $labelArgs = @('--label', $op.label) }
             switch($op.type){
@@ -181,9 +207,3 @@ jobs:
               }
             }
           }
-
-      - name: Upload manifest (artifact)
-        uses: actions/upload-artifact@v4
-        with:
-          name: features-${{ inputs.targetEnv }}
-          path: config/${{ inputs.businessUnit }}/builds/features-${{ inputs.targetEnv == 'tst' && 'test' || (inputs.targetEnv == 'prd' && 'prod' || inputs.targetEnv) }}.${{ github.run_id }}.ops.json
